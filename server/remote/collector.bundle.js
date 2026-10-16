@@ -1,0 +1,660 @@
+"use strict";
+
+// server/remote/collector.ts
+var import_node_os5 = require("os");
+var import_node_path7 = require("path");
+
+// server/scan/claude.ts
+var import_node_os = require("os");
+var import_node_path3 = require("path");
+
+// server/scan/state.ts
+var import_promises = require("fs/promises");
+var import_node_path = require("path");
+var STATE_VERSION = 7;
+var MAX_RECENT_PER_AGENT = 400;
+function emptyState() {
+  return {
+    version: STATE_VERSION,
+    buckets: {},
+    files: {},
+    recent: {},
+    opencode: { watermark: 0 },
+    hosts: {},
+    meta: { lastScanAt: null, scanError: null }
+  };
+}
+function bucketKey(date, harness, model, project) {
+  return [date, harness, model, project].join("");
+}
+function addBucket(buckets, date, harness, model, project, delta) {
+  const key = bucketKey(date, harness, model, project);
+  let bucket = buckets[key];
+  if (!bucket) {
+    bucket = { r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0 };
+    buckets[key] = bucket;
+  }
+  bucket.r += delta.r;
+  bucket.i += delta.i ?? 0;
+  bucket.o += delta.o ?? 0;
+  bucket.cr += delta.cr ?? 0;
+  bucket.cw += delta.cw ?? 0;
+  bucket.rz += delta.rz ?? 0;
+  bucket.cost += delta.cost ?? 0;
+  bucket.credits += delta.credits ?? 0;
+  if (bucket.r <= 0 && bucket.i <= 0 && bucket.o <= 0 && bucket.cr <= 0 && bucket.cw <= 0 && bucket.rz <= 0 && bucket.cost <= 0 && bucket.credits <= 0) {
+    delete buckets[key];
+  }
+}
+function recordCall(state, harness, record, replaceId) {
+  var _a;
+  let list = state.recent[harness];
+  if (!list) {
+    list = [];
+    state.recent[harness] = list;
+  }
+  if (replaceId) {
+    const floor = Math.max(0, list.length - 32);
+    for (let index = list.length - 1; index >= floor; index -= 1) {
+      if (((_a = list[index]) == null ? void 0 : _a.id) === replaceId) {
+        list[index] = record;
+        return;
+      }
+    }
+  }
+  list.push(record);
+  if (list.length > MAX_RECENT_PER_AGENT) list.splice(0, list.length - MAX_RECENT_PER_AGENT);
+}
+async function loadState(dir) {
+  var _a, _b, _c;
+  try {
+    const text = await (0, import_promises.readFile)((0, import_node_path.join)(dir, "state.json"), "utf8");
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || parsed.version !== STATE_VERSION) return emptyState();
+    const state = emptyState();
+    state.buckets = parsed.buckets ?? {};
+    state.files = parsed.files ?? {};
+    state.recent = parsed.recent ?? {};
+    state.opencode = { watermark: typeof ((_a = parsed.opencode) == null ? void 0 : _a.watermark) === "number" ? parsed.opencode.watermark : 0 };
+    state.hosts = parsed.hosts ?? {};
+    state.meta = {
+      lastScanAt: typeof ((_b = parsed.meta) == null ? void 0 : _b.lastScanAt) === "number" ? parsed.meta.lastScanAt : null,
+      scanError: typeof ((_c = parsed.meta) == null ? void 0 : _c.scanError) === "string" ? parsed.meta.scanError : null
+    };
+    return state;
+  } catch {
+    return emptyState();
+  }
+}
+async function saveState(dir, state) {
+  await (0, import_promises.mkdir)(dir, { recursive: true, mode: 448 }).catch(() => {
+  });
+  const file = (0, import_node_path.join)(dir, "state.json");
+  const temporary = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+  await (0, import_promises.writeFile)(temporary, JSON.stringify(state), { mode: 384 });
+  await (0, import_promises.rename)(temporary, file);
+  await (0, import_promises.chmod)(dir, 448).catch(() => {
+  });
+}
+
+// server/scan/util.ts
+var import_promises2 = require("fs/promises");
+var import_node_path2 = require("path");
+function num(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+function localDateKey(ms) {
+  const date = new Date(ms);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+async function listJsonlFiles(root) {
+  const files = [];
+  const queue = [root];
+  while (queue.length > 0) {
+    const dir = queue.pop();
+    let entries;
+    try {
+      entries = await (0, import_promises2.readdir)(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) queue.push((0, import_node_path2.join)(dir, entry.name));
+      else if (entry.name.endsWith(".jsonl")) files.push((0, import_node_path2.join)(dir, entry.name));
+    }
+  }
+  return files;
+}
+var CHUNK = 4 * 1024 * 1024;
+async function forEachNewLine(path, fromOffset, onLine) {
+  let handle;
+  try {
+    handle = await (0, import_promises2.open)(path, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) return null;
+    let pos = fromOffset > info.size ? 0 : fromOffset;
+    let carry = Buffer.alloc(0);
+    const buffer = Buffer.allocUnsafe(CHUNK);
+    while (pos < info.size) {
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(CHUNK, info.size - pos), pos);
+      if (bytesRead <= 0) break;
+      pos += bytesRead;
+      const view = carry.length > 0 ? Buffer.concat([carry, buffer.subarray(0, bytesRead)]) : buffer.subarray(0, bytesRead);
+      let start = 0;
+      let newline = -1;
+      while ((newline = view.indexOf(10, start)) !== -1) {
+        onLine(view.subarray(start, newline).toString("utf8"));
+        start = newline + 1;
+      }
+      carry = Buffer.from(view.subarray(start));
+    }
+    return { offset: pos - carry.length, size: info.size, mtimeMs: info.mtimeMs };
+  } finally {
+    await handle.close();
+  }
+}
+
+// server/scan/claude.ts
+var CLAUDE = "claude";
+function claudeRoots(env = process.env) {
+  var _a;
+  const home = (0, import_node_os.homedir)();
+  const base = ((_a = env.CLAUDE_CONFIG_DIR) == null ? void 0 : _a.trim()) || (0, import_node_path3.join)(home, ".claude");
+  return [.../* @__PURE__ */ new Set([(0, import_node_path3.join)(base, "projects"), (0, import_node_path3.join)(home, ".config", "claude", "projects")])];
+}
+async function scanClaudeFile(state, path) {
+  const previousState = state.files[path];
+  const recent = /* @__PURE__ */ new Map();
+  if (previousState == null ? void 0 : previousState.recent) {
+    for (const contribution of previousState.recent) recent.set(contribution.id, contribution);
+  }
+  const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
+    var _a;
+    if (!line.includes('"usage"') || !line.includes('"assistant"')) return;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if ((entry == null ? void 0 : entry.type) !== "assistant") return;
+    const message = entry.message;
+    if (!message || typeof message !== "object") return;
+    const usage = message.usage;
+    if (!usage || typeof usage !== "object") return;
+    const ts = Date.parse(entry.timestamp);
+    if (!Number.isFinite(ts)) return;
+    const id = typeof message.id === "string" && message.id ? message.id : null;
+    const contribution = {
+      id: id ?? "",
+      d: localDateKey(ts),
+      m: typeof message.model === "string" && message.model ? message.model : "unknown",
+      p: typeof entry.cwd === "string" ? entry.cwd : "",
+      i: num(usage.input_tokens),
+      o: num(usage.output_tokens),
+      cr: num(usage.cache_read_input_tokens),
+      cw: num(usage.cache_creation_input_tokens),
+      rz: num((_a = usage.output_tokens_details) == null ? void 0 : _a.thinking_tokens)
+    };
+    if (id && recent.has(id)) {
+      const before = recent.get(id);
+      addBucket(state.buckets, before.d, CLAUDE, before.m, before.p, {
+        r: -1,
+        i: -before.i,
+        o: -before.o,
+        cr: -before.cr,
+        cw: -before.cw,
+        rz: -before.rz
+      });
+    }
+    if (id) {
+      recent.set(id, contribution);
+      if (recent.size > 96) {
+        const oldest = recent.keys().next().value;
+        if (typeof oldest === "string" && oldest !== id) recent.delete(oldest);
+      }
+    }
+    addBucket(state.buckets, contribution.d, CLAUDE, contribution.m, contribution.p, {
+      r: 1,
+      i: contribution.i,
+      o: contribution.o,
+      cr: contribution.cr,
+      cw: contribution.cw,
+      rz: contribution.rz
+    });
+    recordCall(
+      state,
+      CLAUDE,
+      {
+        t: ts,
+        m: contribution.m,
+        p: contribution.p,
+        s: typeof entry.sessionId === "string" ? entry.sessionId : "",
+        i: contribution.i,
+        o: contribution.o,
+        cr: contribution.cr,
+        cw: contribution.cw,
+        rz: contribution.rz,
+        cost: 0,
+        credits: 0,
+        id: id ?? void 0
+      },
+      id ?? void 0
+    );
+  });
+  if (!result) return;
+  const fileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs };
+  if (recent.size > 0) fileState.recent = [...recent.values()].slice(-96);
+  state.files[path] = fileState;
+}
+
+// server/scan/codex.ts
+var import_node_os2 = require("os");
+var import_node_path4 = require("path");
+var CODEX = "codex";
+function codexRoots(env = process.env) {
+  var _a;
+  const home = ((_a = env.CODEX_HOME) == null ? void 0 : _a.trim()) || (0, import_node_path4.join)((0, import_node_os2.homedir)(), ".codex");
+  return [(0, import_node_path4.join)(home, "sessions"), (0, import_node_path4.join)(home, "archived_sessions")];
+}
+var BURST_WINDOW_MS = 2e3;
+async function scanCodexFile(state, path) {
+  const previousState = state.files[path];
+  let project = (previousState == null ? void 0 : previousState.project) ?? "";
+  let model = (previousState == null ? void 0 : previousState.model) ?? "";
+  let session = (previousState == null ? void 0 : previousState.session) ?? "";
+  let totals = (previousState == null ? void 0 : previousState.totals) ?? null;
+  let fork = (previousState == null ? void 0 : previousState.codexFork) ?? { forked: false, point: null, baselineDone: false, firstTs: null };
+  const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
+    var _a, _b;
+    if (line.includes('"session_meta"')) {
+      try {
+        const entry2 = JSON.parse(line);
+        const payload = (entry2 == null ? void 0 : entry2.payload) ?? {};
+        if (!project && typeof payload.cwd === "string") project = payload.cwd;
+        const metaSession = payload.id ?? payload.session_id;
+        if (!session && typeof metaSession === "string") session = metaSession;
+        if (typeof payload.forked_from_id === "string" && payload.forked_from_id) {
+          fork = {
+            forked: true,
+            point: typeof payload.forked_from_ordinal_exclusive === "number" ? payload.forked_from_ordinal_exclusive : null,
+            baselineDone: false,
+            firstTs: null
+          };
+        }
+      } catch {
+      }
+      return;
+    }
+    if (line.includes('"turn_context"')) {
+      try {
+        const entry2 = JSON.parse(line);
+        const value = (_a = entry2 == null ? void 0 : entry2.payload) == null ? void 0 : _a.model;
+        if (typeof value === "string" && value) model = value;
+      } catch {
+      }
+      return;
+    }
+    if (!line.includes('"token_count"')) return;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const info = (_b = entry == null ? void 0 : entry.payload) == null ? void 0 : _b.info;
+    if (!info) return;
+    const total = info.total_token_usage;
+    if (!total || typeof total !== "object") return;
+    const current = [
+      num(total.input_tokens),
+      num(total.cached_input_tokens),
+      num(total.cache_write_input_tokens),
+      num(total.output_tokens),
+      num(total.reasoning_output_tokens),
+      num(total.total_tokens)
+    ];
+    const ts = Date.parse(entry.timestamp);
+    const ordinal = num(entry.ordinal);
+    if (fork.forked && !fork.baselineDone) {
+      if (fork.point !== null) {
+        if (!(ordinal > 0 && ordinal > fork.point)) {
+          totals = current;
+          return;
+        }
+        fork.baselineDone = true;
+        totals = current;
+        return;
+      }
+      if (fork.firstTs === null && Number.isFinite(ts)) fork.firstTs = ts;
+      if (!Number.isFinite(ts) || fork.firstTs === null || ts - fork.firstTs <= BURST_WINDOW_MS) {
+        totals = current;
+        return;
+      }
+      fork.baselineDone = true;
+    }
+    if (fork.forked && fork.baselineDone && fork.point !== null && ordinal > 0 && ordinal <= fork.point) {
+      totals = current;
+      return;
+    }
+    const before = totals;
+    totals = current;
+    const delta = before ? current.map((value, index) => Math.max(0, value - (before[index] ?? 0))) : current.slice();
+    const dInput = delta[0] ?? 0;
+    const dCached = delta[1] ?? 0;
+    const dCacheWrite = delta[2] ?? 0;
+    const dOutput = delta[3] ?? 0;
+    const dReasoning = delta[4] ?? 0;
+    const dTotal = delta[5] ?? 0;
+    if (dTotal <= 0) return;
+    if (!Number.isFinite(ts)) return;
+    const input = Math.max(0, dInput - dCached);
+    addBucket(state.buckets, localDateKey(ts), CODEX, model || "codex", project, {
+      r: 1,
+      i: input,
+      o: dOutput,
+      cr: dCached,
+      cw: dCacheWrite,
+      rz: dReasoning
+    });
+    recordCall(state, CODEX, {
+      t: ts,
+      m: model || "codex",
+      p: project,
+      s: session,
+      i: input,
+      o: dOutput,
+      cr: dCached,
+      cw: dCacheWrite,
+      rz: dReasoning,
+      cost: 0,
+      credits: 0
+    });
+  });
+  if (!result) return;
+  const fileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, model, session };
+  if (totals) fileState.totals = totals;
+  if (fork.forked) fileState.codexFork = fork;
+  state.files[path] = fileState;
+}
+
+// server/scan/opencode.ts
+var import_node_fs = require("fs");
+var import_node_module = require("module");
+var import_node_os3 = require("os");
+var import_node_path5 = require("path");
+var OPENCODE = "opencode";
+var sqliteModule;
+async function loadSqlite() {
+  if (sqliteModule !== void 0) return sqliteModule;
+  try {
+    const requireFn = (0, import_node_module.createRequire)((0, import_node_path5.join)(process.cwd(), "agent-usage-sqlite.cjs"));
+    sqliteModule = requireFn("node:sqlite");
+  } catch {
+    sqliteModule = null;
+  }
+  return sqliteModule;
+}
+function opencodeDbPath(env = process.env) {
+  var _a;
+  const dataHome = ((_a = env.XDG_DATA_HOME) == null ? void 0 : _a.trim()) || (0, import_node_path5.join)((0, import_node_os3.homedir)(), ".local", "share");
+  return (0, import_node_path5.join)(dataHome, "opencode", "opencode.db");
+}
+async function scanOpencode(state) {
+  var _a, _b;
+  const path = opencodeDbPath();
+  if (!(0, import_node_fs.existsSync)(path)) return;
+  const sqlite = await loadSqlite();
+  if (!sqlite) {
+    console.warn("[agent-usage] opencode skipped: node:sqlite unavailable (needs Node >= 22.5)");
+    return;
+  }
+  let db = null;
+  try {
+    try {
+      db = new sqlite.DatabaseSync(path, { readOnly: true });
+    } catch {
+      db = new sqlite.DatabaseSync(path);
+      db.exec("PRAGMA query_only = ON;");
+    }
+    let watermark = state.opencode.watermark;
+    const statement = db.prepare(
+      "SELECT id, session_id, time_created, time_updated, data FROM message WHERE time_updated > ? ORDER BY time_updated ASC LIMIT 4000"
+    );
+    for (let batch = 0; batch < 500; batch += 1) {
+      const rows = statement.all(watermark);
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        const updated = num(row.time_updated);
+        if (updated > watermark) watermark = updated;
+        let data;
+        try {
+          data = JSON.parse(row.data);
+        } catch {
+          continue;
+        }
+        if ((data == null ? void 0 : data.role) !== "assistant") continue;
+        const tokens = data.tokens ?? {};
+        const cache = tokens.cache ?? {};
+        const input = num(tokens.input);
+        const output = num(tokens.output);
+        const reasoning = num(tokens.reasoning);
+        const cacheRead = num(cache.read);
+        const cacheWrite = num(cache.write);
+        const cost = typeof data.cost === "number" && data.cost > 0 ? data.cost : 0;
+        if (input + output + reasoning + cacheRead + cacheWrite <= 0 && cost <= 0) continue;
+        const ts = num((_a = data.time) == null ? void 0 : _a.created) || num(row.time_created);
+        const model = typeof data.modelID === "string" && data.modelID ? data.modelID : "unknown";
+        const project = typeof ((_b = data.path) == null ? void 0 : _b.cwd) === "string" ? data.path.cwd : "";
+        addBucket(state.buckets, localDateKey(ts), OPENCODE, model, project, {
+          r: 1,
+          i: input,
+          o: output,
+          cr: cacheRead,
+          cw: cacheWrite,
+          rz: reasoning,
+          cost
+        });
+        recordCall(state, OPENCODE, {
+          t: ts,
+          m: model,
+          p: project,
+          s: typeof row.session_id === "string" ? row.session_id : "",
+          i: input,
+          o: output,
+          cr: cacheRead,
+          cw: cacheWrite,
+          rz: reasoning,
+          cost,
+          credits: 0
+        });
+      }
+      if (rows.length < 4e3) break;
+    }
+    state.opencode.watermark = watermark;
+  } finally {
+    db == null ? void 0 : db.close();
+  }
+}
+
+// server/scan/pi.ts
+var import_node_os4 = require("os");
+var import_node_path6 = require("path");
+var PI = "pi";
+function piRoots(env = process.env) {
+  var _a, _b;
+  const home = (0, import_node_os4.homedir)();
+  const roots = [];
+  const sessionDir = (_a = env.PI_CODING_AGENT_SESSION_DIR) == null ? void 0 : _a.trim();
+  if (sessionDir) roots.push(sessionDir);
+  const agentDir = ((_b = env.PI_CODING_AGENT_DIR) == null ? void 0 : _b.trim()) || (0, import_node_path6.join)(home, ".pi", "agent");
+  roots.push((0, import_node_path6.join)(agentDir, "sessions"));
+  return [...new Set(roots)];
+}
+async function scanPiFile(state, path) {
+  const previousState = state.files[path];
+  let project = (previousState == null ? void 0 : previousState.project) ?? "";
+  const base = path.split("/").pop() ?? "";
+  const underscore = base.lastIndexOf("_");
+  const session = (underscore >= 0 ? base.slice(underscore + 1) : base).replace(/\.jsonl$/, "");
+  const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
+    var _a;
+    if (!project && line.includes('"type":"session"')) {
+      try {
+        const entry2 = JSON.parse(line);
+        if (typeof (entry2 == null ? void 0 : entry2.cwd) === "string") project = entry2.cwd;
+      } catch {
+      }
+      return;
+    }
+    if (!line.includes('"usage"') || !line.includes('"assistant"')) return;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if ((entry == null ? void 0 : entry.type) !== "message") return;
+    const message = entry.message;
+    if (!message || typeof message !== "object" || message.role !== "assistant") return;
+    const usage = message.usage;
+    if (!usage || typeof usage !== "object") return;
+    const ts = Date.parse(entry.timestamp);
+    if (!Number.isFinite(ts)) return;
+    const cost = typeof ((_a = usage.cost) == null ? void 0 : _a.total) === "number" && usage.cost.total > 0 ? usage.cost.total : 0;
+    const model = typeof message.model === "string" && message.model ? message.model : "unknown";
+    addBucket(state.buckets, localDateKey(ts), PI, model, project, {
+      r: 1,
+      i: num(usage.input),
+      o: num(usage.output),
+      cr: num(usage.cacheRead),
+      cw: num(usage.cacheWrite),
+      rz: num(usage.reasoning),
+      cost
+    });
+    recordCall(state, PI, {
+      t: ts,
+      m: model,
+      p: project,
+      s: session,
+      i: num(usage.input),
+      o: num(usage.output),
+      cr: num(usage.cacheRead),
+      cw: num(usage.cacheWrite),
+      rz: num(usage.reasoning),
+      cost,
+      credits: 0
+    });
+  });
+  if (!result) return;
+  state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project };
+}
+
+// server/scan/scanner.ts
+async function scanAll(state, callbacks, enabledHarnesses) {
+  const on = (id) => !enabledHarnesses || enabledHarnesses.has(id);
+  const [claudeFiles, piFiles, codexFiles] = await Promise.all([
+    collectRoots(claudeRoots()),
+    collectRoots(piRoots()),
+    collectRoots(codexRoots())
+  ]);
+  const total = (on("claude") ? claudeFiles.length : 0) + (on("pi") ? piFiles.length : 0) + (on("codex") ? codexFiles.length : 0) + (on("opencode") ? 1 : 0);
+  let done = 0;
+  let checkpointAt = Date.now();
+  callbacks.onProgress(done, total);
+  const tick = () => {
+    done += 1;
+    callbacks.onProgress(done, total);
+    const now = Date.now();
+    if (now - checkpointAt > 5e3) {
+      checkpointAt = now;
+      callbacks.onCheckpoint();
+    }
+  };
+  const run = async (files, scanOne) => {
+    for (const file of files) {
+      if (callbacks.shouldStop()) return false;
+      try {
+        await scanOne(state, file);
+      } catch (error) {
+        console.error("[agent-usage] scan failed for", file, error);
+      }
+      tick();
+    }
+    return true;
+  };
+  if (on("claude") && !await run(claudeFiles, scanClaudeFile)) return;
+  if (on("pi") && !await run(piFiles, scanPiFile)) return;
+  if (on("opencode")) {
+    if (callbacks.shouldStop()) return;
+    try {
+      await scanOpencode(state);
+    } catch (error) {
+      console.error("[agent-usage] opencode scan failed", error);
+    }
+    tick();
+  }
+  if (on("codex") && !await run(codexFiles, scanCodexFile)) return;
+  callbacks.onCheckpoint();
+}
+async function collectRoots(roots) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const root of roots) {
+    for (const file of await listJsonlFiles(root)) seen.add(file);
+  }
+  return [...seen].sort();
+}
+
+// server/remote/collector.ts
+function argValue(args, name) {
+  const index = args.indexOf(name);
+  return index >= 0 && index + 1 < args.length ? args[index + 1] ?? null : null;
+}
+async function main() {
+  const args = process.argv.slice(2);
+  const cacheDir = argValue(args, "--cache-dir") || (0, import_node_path7.join)((0, import_node_os5.homedir)(), ".cache", "agent-usage-plugin");
+  const fresh = args.includes("--fresh");
+  process.stderr.write(`agent-usage collector: node ${process.version}, cache ${cacheDir}${fresh ? ", fresh" : ""}
+`);
+  const state = fresh ? emptyState() : await loadState(cacheDir);
+  let lastLog = 0;
+  await scanAll(state, {
+    shouldStop: () => false,
+    onProgress: (done, total) => {
+      const now = Date.now();
+      if (now - lastLog > 3e3 || done === total) {
+        lastLog = now;
+        process.stderr.write(`progress ${done}/${total}
+`);
+      }
+    },
+    onCheckpoint: () => {
+      void saveState(cacheDir, state).catch(() => {
+      });
+    }
+  });
+  state.meta.lastScanAt = Date.now();
+  state.meta.scanError = null;
+  await saveState(cacheDir, state);
+  const projection = {
+    v: 1,
+    generatedAt: Date.now(),
+    node: process.version,
+    buckets: state.buckets,
+    recent: state.recent
+  };
+  process.stdout.write(JSON.stringify(projection));
+  process.stderr.write(`agent-usage collector: done, ${Object.keys(state.buckets).length} buckets
+`);
+}
+main().catch((error) => {
+  process.stderr.write(`agent-usage collector failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}
+`);
+  process.exitCode = 1;
+});

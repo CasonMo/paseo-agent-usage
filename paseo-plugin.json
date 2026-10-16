@@ -1,0 +1,11 @@
+{
+  "id": "agent-usage-plugin",
+  "name": "Agent Usage",
+  "description": "基于本地会话日志统计并展示各 Agent 的用量（Claude Code、Codex、OpenCode、Pi），支持 SSH 远端机器与自定义时间范围",
+  "media": [
+    "assets/screenshot.png"
+  ],
+  "requirements": {
+    "paseo": ">=0.11.2"
+  }
+}

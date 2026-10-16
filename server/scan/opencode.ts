@@ -1,0 +1,116 @@
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { addBucket, recordCall, type ScanState } from "./state";
+import { localDateKey, num } from "./util";
+
+export const OPENCODE = "opencode";
+
+let sqliteModule: typeof import("node:sqlite") | null | undefined;
+
+/**
+ * node:sqlite exists on Node >= 22.5; older runtimes skip the SQLite sources.
+ * Loaded through createRequire so the bundled CJS collector works too
+ * (esbuild rewrites a bare dynamic import of node builtins into an
+ * unsupported dynamic require that would otherwise fail).
+ */
+export async function loadSqlite(): Promise<typeof import("node:sqlite") | null> {
+  if (sqliteModule !== undefined) return sqliteModule;
+  try {
+    const requireFn = createRequire(join(process.cwd(), "agent-usage-sqlite.cjs"));
+    sqliteModule = requireFn("node:sqlite") as typeof import("node:sqlite");
+  } catch {
+    sqliteModule = null;
+  }
+  return sqliteModule;
+}
+
+export function opencodeDbPath(env: NodeJS.ProcessEnv = process.env): string {
+  const dataHome = env.XDG_DATA_HOME?.trim() || join(homedir(), ".local", "share");
+  return join(dataHome, "opencode", "opencode.db");
+}
+
+interface MessageRow {
+  id: string;
+  session_id: string;
+  time_created: number;
+  time_updated: number;
+  data: string;
+}
+
+export async function scanOpencode(state: ScanState): Promise<void> {
+  const path = opencodeDbPath();
+  if (!existsSync(path)) return;
+  const sqlite = await loadSqlite();
+  if (!sqlite) {
+    console.warn("[agent-usage] opencode skipped: node:sqlite unavailable (needs Node >= 22.5)");
+    return;
+  }
+  let db: import("node:sqlite").DatabaseSync | null = null;
+  try {
+    try {
+      db = new sqlite.DatabaseSync(path, { readOnly: true });
+    } catch {
+      db = new sqlite.DatabaseSync(path);
+      db.exec("PRAGMA query_only = ON;");
+    }
+    let watermark = state.opencode.watermark;
+    const statement = db.prepare(
+      "SELECT id, session_id, time_created, time_updated, data FROM message WHERE time_updated > ? ORDER BY time_updated ASC LIMIT 4000",
+    );
+    for (let batch = 0; batch < 500; batch += 1) {
+      const rows = statement.all(watermark) as unknown as MessageRow[];
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        const updated = num(row.time_updated);
+        if (updated > watermark) watermark = updated;
+        let data: any;
+        try {
+          data = JSON.parse(row.data);
+        } catch {
+          continue;
+        }
+        if (data?.role !== "assistant") continue;
+        const tokens = data.tokens ?? {};
+        const cache = tokens.cache ?? {};
+        const input = num(tokens.input);
+        const output = num(tokens.output);
+        const reasoning = num(tokens.reasoning);
+        const cacheRead = num(cache.read);
+        const cacheWrite = num(cache.write);
+        const cost = typeof data.cost === "number" && data.cost > 0 ? data.cost : 0;
+        if (input + output + reasoning + cacheRead + cacheWrite <= 0 && cost <= 0) continue;
+        const ts = num(data.time?.created) || num(row.time_created);
+        const model = typeof data.modelID === "string" && data.modelID ? data.modelID : "unknown";
+        const project = typeof data.path?.cwd === "string" ? data.path.cwd : "";
+        addBucket(state.buckets, localDateKey(ts), OPENCODE, model, project, {
+          r: 1,
+          i: input,
+          o: output,
+          cr: cacheRead,
+          cw: cacheWrite,
+          rz: reasoning,
+          cost,
+        });
+        recordCall(state, OPENCODE, {
+          t: ts,
+          m: model,
+          p: project,
+          s: typeof row.session_id === "string" ? row.session_id : "",
+          i: input,
+          o: output,
+          cr: cacheRead,
+          cw: cacheWrite,
+          rz: reasoning,
+          cost,
+          credits: 0,
+        });
+      }
+      if (rows.length < 4000) break;
+    }
+    state.opencode.watermark = watermark;
+  } finally {
+    db?.close();
+  }
+}

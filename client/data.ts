@@ -1,0 +1,50 @@
+import { useRpc } from "@getpaseo/plugin/client";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { usageAgentRpc, usageAgentsGetRpc, usageAgentsSetRpc, usageRefreshRpc, usageReportRpc, type UsageRangeKey } from "../shared/usage";
+
+export interface CustomRange {
+  from: string;
+  to: string;
+}
+
+export function useUsageReport(range: UsageRangeKey, origin?: string, custom?: CustomRange) {
+  const call = useRpc(usageReportRpc);
+  return useQuery({
+    queryKey: ["agent-usage", range, origin ?? "aggregate", custom ? `${custom.from}~${custom.to}` : ""],
+    queryFn: () => call({ range, origin, ...(custom ? { from: custom.from, to: custom.to } : {}) }),
+    placeholderData: keepPreviousData,
+    staleTime: 10_000,
+    refetchInterval: (query) => (query.state.data?.scanning ? 2_500 : 30_000),
+  });
+}
+
+export function useAgentReport(agent: string, range: UsageRangeKey, enabled = true, origin?: string, custom?: CustomRange) {
+  const call = useRpc(usageAgentRpc);
+  return useQuery({
+    queryKey: ["agent-usage-agent", agent, range, origin ?? "aggregate", custom ? `${custom.from}~${custom.to}` : ""],
+    queryFn: () => call({ agent, range, origin, ...(custom ? { from: custom.from, to: custom.to } : {}) }),
+    enabled,
+    placeholderData: keepPreviousData,
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useAgentsConfig() {
+  const call = useRpc(usageAgentsGetRpc);
+  return useQuery({
+    queryKey: ["agent-usage-agents"],
+    queryFn: () => call({}),
+    staleTime: 30_000,
+  });
+}
+
+export function useSetAgentsConfig() {
+  const call = useRpc(usageAgentsSetRpc);
+  return call;
+}
+
+export function useRefreshUsage() {
+  const call = useRpc(usageRefreshRpc);
+  return call;
+}

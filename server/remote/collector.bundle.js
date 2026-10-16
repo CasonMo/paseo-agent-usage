@@ -11,7 +11,7 @@ var import_node_path3 = require("path");
 // server/scan/state.ts
 var import_promises = require("fs/promises");
 var import_node_path = require("path");
-var STATE_VERSION = 8;
+var STATE_VERSION = 9;
 var MAX_RECENT_PER_AGENT = 400;
 function emptyState() {
   return {
@@ -329,6 +329,36 @@ async function scanCodexFile(state, path) {
         if (!(ordinal > 0 && ordinal > fork.point)) {
           totals = current;
           return;
+        }
+        const last = info.last_token_usage;
+        if (last && typeof last === "object" && Number.isFinite(ts)) {
+          const lCached = num(last.cached_input_tokens);
+          const lInput = num(last.input_tokens);
+          const lOutput = num(last.output_tokens);
+          if (lInput + lCached + lOutput > 0) {
+            const input2 = Math.max(0, lInput - lCached);
+            addBucket(state.buckets, localDateKey(ts), CODEX, model || "codex", project, {
+              r: 1,
+              i: input2,
+              o: lOutput,
+              cr: lCached,
+              cw: num(last.cache_write_input_tokens),
+              rz: num(last.reasoning_output_tokens)
+            });
+            recordCall(state, CODEX, {
+              t: ts,
+              m: model || "codex",
+              p: project,
+              s: session,
+              i: input2,
+              o: lOutput,
+              cr: lCached,
+              cw: num(last.cache_write_input_tokens),
+              rz: num(last.reasoning_output_tokens),
+              cost: 0,
+              credits: 0
+            });
+          }
         }
         fork.baselineDone = true;
         totals = current;

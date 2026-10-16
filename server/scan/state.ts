@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
-export const STATE_VERSION = 8;
+export const STATE_VERSION = 9;
 
 export interface DayBucket {
   r: number;

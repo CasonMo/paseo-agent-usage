@@ -13,7 +13,8 @@ export function codexRoots(env: NodeJS.ProcessEnv = process.env): string[] {
 /**
  * Forked rollouts must not be counted from their cumulative totals:
  * - Newer files carry the parent's cumulative snapshot in their first post-fork
- *   token event; that snapshot is a baseline, not usage.
+ *   token event; that snapshot is a baseline, but the event's own
+ *   last_token_usage is still real usage and is counted (once).
  * - Older files (no ordinal fields) replay the parent's token history as a burst
  *   of events emitted within the first seconds after the fork; those events are
  *   synthetic and are skipped (only events after the burst window count).
@@ -88,6 +89,41 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
           // Replayed or pre-fork event: keep it only as the running baseline.
           totals = current;
           return;
+        }
+        // First event after the fork point: its cumulative totals carry the
+        // parent's history (kept as the baseline), but last_token_usage is
+        // this request's own usage and must still be counted. The request
+        // happened for real after the fork (typically the session-start
+        // request), and reverse proxies see it too.
+        const last = info.last_token_usage as Record<string, unknown> | undefined;
+        if (last && typeof last === "object" && Number.isFinite(ts)) {
+          const lCached = num(last.cached_input_tokens);
+          const lInput = num(last.input_tokens);
+          const lOutput = num(last.output_tokens);
+          if (lInput + lCached + lOutput > 0) {
+            const input = Math.max(0, lInput - lCached);
+            addBucket(state.buckets, localDateKey(ts), CODEX, model || "codex", project, {
+              r: 1,
+              i: input,
+              o: lOutput,
+              cr: lCached,
+              cw: num(last.cache_write_input_tokens),
+              rz: num(last.reasoning_output_tokens),
+            });
+            recordCall(state, CODEX, {
+              t: ts,
+              m: model || "codex",
+              p: project,
+              s: session,
+              i: input,
+              o: lOutput,
+              cr: lCached,
+              cw: num(last.cache_write_input_tokens),
+              rz: num(last.reasoning_output_tokens),
+              cost: 0,
+              credits: 0,
+            });
+          }
         }
         fork.baselineDone = true;
         totals = current;

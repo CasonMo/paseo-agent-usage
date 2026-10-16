@@ -7,19 +7,35 @@ import { localDateKey, num } from "./util";
 
 export const OPENCODE = "opencode";
 
-let sqliteModule: typeof import("node:sqlite") | null | undefined;
-
 /**
- * node:sqlite exists on Node >= 22.5; older runtimes skip the SQLite sources.
- * Loaded through createRequire so the bundled CJS collector works too
- * (esbuild rewrites a bare dynamic import of node builtins into an
- * unsupported dynamic require that would otherwise fail).
+ * Minimal structural types for the optional node:sqlite builtin. The module
+ * ships with Node >= 22.5 and is loaded at runtime through createRequire,
+ * never through a static or type-level import: install-time build checks on
+ * machines running older Node versions fail to resolve node:sqlite type
+ * dependencies, because the builtin does not exist there yet.
  */
-export async function loadSqlite(): Promise<typeof import("node:sqlite") | null> {
+interface SqliteStatement {
+  all(...params: unknown[]): unknown[];
+}
+
+interface SqliteDatabase {
+  exec(sql: string): void;
+  prepare(sql: string): SqliteStatement;
+  close(): void;
+}
+
+interface SqliteModule {
+  DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => SqliteDatabase;
+}
+
+let sqliteModule: SqliteModule | null | undefined;
+
+/** Loads node:sqlite, or null on runtimes older than Node 22.5. */
+export async function loadSqlite(): Promise<SqliteModule | null> {
   if (sqliteModule !== undefined) return sqliteModule;
   try {
     const requireFn = createRequire(join(process.cwd(), "agent-usage-sqlite.cjs"));
-    sqliteModule = requireFn("node:sqlite") as typeof import("node:sqlite");
+    sqliteModule = requireFn("node:sqlite") as SqliteModule;
   } catch {
     sqliteModule = null;
   }
@@ -47,7 +63,7 @@ export async function scanOpencode(state: ScanState): Promise<void> {
     console.warn("[agent-usage] opencode skipped: node:sqlite unavailable (needs Node >= 22.5)");
     return;
   }
-  let db: import("node:sqlite").DatabaseSync | null = null;
+  let db: SqliteDatabase | null = null;
   try {
     try {
       db = new sqlite.DatabaseSync(path, { readOnly: true });

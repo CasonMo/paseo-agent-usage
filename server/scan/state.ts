@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
-export const STATE_VERSION = 7;
+export const STATE_VERSION = 8;
 
 export interface DayBucket {
   r: number;
@@ -82,6 +82,12 @@ export interface ScanState {
   files: Record<string, FileState>;
   recent: Record<string, CallRecord[]>;
   opencode: { watermark: number };
+  /**
+   * Pi cross-file dedup ledger: "entryId@timestamp" keys of every counted
+   * message. Pi fork / sub-run files copy messages from their parent, so the
+   * same key can appear in several files; only the first occurrence counts.
+   */
+  pi: { seen: string[] };
   /** Projections pulled from remote machines over SSH, keyed by host name. */
   hosts: Record<string, RemoteHostState>;
   meta: { lastScanAt: number | null; scanError: string | null };
@@ -96,6 +102,7 @@ export function emptyState(): ScanState {
     files: {},
     recent: {},
     opencode: { watermark: 0 },
+    pi: { seen: [] },
     hosts: {},
     meta: { lastScanAt: null, scanError: null },
   };
@@ -188,6 +195,7 @@ export async function loadState(dir: string): Promise<ScanState> {
     state.files = (parsed.files as ScanState["files"]) ?? {};
     state.recent = (parsed.recent as ScanState["recent"]) ?? {};
     state.opencode = { watermark: typeof parsed.opencode?.watermark === "number" ? parsed.opencode.watermark : 0 };
+    state.pi = { seen: Array.isArray(parsed.pi?.seen) ? (parsed.pi.seen as string[]).filter((k) => typeof k === "string") : [] };
     state.hosts = (parsed.hosts as ScanState["hosts"]) ?? {};
     state.meta = {
       lastScanAt: typeof parsed.meta?.lastScanAt === "number" ? parsed.meta.lastScanAt : null,

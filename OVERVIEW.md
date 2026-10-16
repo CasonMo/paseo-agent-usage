@@ -6,8 +6,8 @@
 
 - Claude Code：`~/.claude/projects`（含 subagents）
 - Codex：`~/.codex/sessions` 与 `~/.codex/archived_sessions`
-- OpenCode：`~/.local/share/opencode/opencode.db`（通过 node:sqlite 只读）
-- Pi：`~/.pi/agent/sessions`
+- OpenCode：`~/.local/share/opencode/opencode.db`（通过 node:sqlite 只读；reasoning token 计入输出，与计费口径一致）
+- Pi：`~/.pi/agent/sessions`（含 forks 与子会话目录；跨文件按消息去重，fork 复制段不重复计）
 
 界面：侧边栏底部「用量」行显示今日 token；点击打开全屏页，支持今日 / 近 7 天 / 近 30 天 / 近 12 周 / 近 12 月 / 自定义日期范围（日历圈选起止）。
 
@@ -36,7 +36,7 @@
 - 可选字段：`port`、`identityFile`、`nodePath`（远端 node 路径）、`cacheDir`（远端增量缓存目录）、`timeoutMs`、`enabled`
 - 远端要求：无需安装任何额外软件，插件自动探测 JS 运行时（PATH / nvm / volta / fnm / asdf / homebrew 等常见位置，并尝试加载 `~/.nvm/nvm.sh`）；探测不到时才需要填 `nodePath`。SQLite 源需 Node ≥ 22.5，否则自动跳过；首次拉取为全量，之后增量
 - 安全：插件不读取/解密任何远端凭据；远端只读日志，仅写一个小增量缓存（`~/.cache/agent-usage-plugin`）
-- 界面：总览「按设备」区块展示每台机器的用量与同步状态；请求日志带设备来源标签
+- 界面：顶部「设备」页签可切换聚合 / 单机视图（页签下方显示各机器的同步状态）；请求日志带设备来源标签
 
 ## 数据与权限
 

@@ -1,9 +1,18 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { addBucket, recordCall, type FileState, type ScanState } from "./state";
+import { addBucket, recordCall, type ScanState } from "./state";
 import { forEachNewLine, localDateKey, num } from "./util";
 
 export const PI = "pi";
+
+/**
+ * Cross-file dedup ledger cap. Every counted message leaves an
+ * "entryId@timestamp" key behind so that copies in other files are skipped.
+ * 400k entries is decades of headroom; if the cap is ever reached the oldest
+ * keys are dropped first (a much-older message newly copied into a fork could
+ * then be counted again, which is acceptable at that scale).
+ */
+const PI_SEEN_LIMIT = 400_000;
 
 export function piRoots(env: NodeJS.ProcessEnv = process.env): string[] {
   const home = homedir();
@@ -21,6 +30,7 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
   const base = path.split("/").pop() ?? "";
   const underscore = base.lastIndexOf("_");
   const session = (underscore >= 0 ? base.slice(underscore + 1) : base).replace(/\.jsonl$/, "");
+  const seen = new Set(state.pi.seen);
   const result = await forEachNewLine(path, previousState?.offset ?? 0, (line) => {
     if (!project && line.includes('"type":"session"')) {
       try {
@@ -45,6 +55,17 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
     if (!usage || typeof usage !== "object") return;
     const ts = Date.parse(entry.timestamp);
     if (!Number.isFinite(ts)) return;
+    // Pi fork / sub-run files replay messages copied from their parent with the
+    // same entry id and timestamp. Count each message once across all files: a
+    // rewritten or regenerated message gets a new id and is still counted.
+    const entryId = typeof entry.id === "string" ? entry.id : "";
+    const timestamp = typeof entry.timestamp === "string" ? entry.timestamp : "";
+    if (entryId && timestamp) {
+      const key = `${entryId}@${timestamp}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      state.pi.seen.push(key);
+    }
     const cost = typeof usage.cost?.total === "number" && usage.cost.total > 0 ? usage.cost.total : 0;
     const model = typeof message.model === "string" && message.model ? message.model : "unknown";
     addBucket(state.buckets, localDateKey(ts), PI, model, project, {
@@ -71,5 +92,8 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
     });
   });
   if (!result) return;
+  if (state.pi.seen.length > PI_SEEN_LIMIT) {
+    state.pi.seen = state.pi.seen.slice(-PI_SEEN_LIMIT);
+  }
   state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project };
 }

@@ -100,10 +100,14 @@ export async function scanOpencode(state: ScanState): Promise<void> {
         const ts = num(data.time?.created) || num(row.time_created);
         const model = typeof data.modelID === "string" && data.modelID ? data.modelID : "unknown";
         const project = typeof data.path?.cwd === "string" ? data.path.cwd : "";
+        // Billing semantics: reasoning tokens are part of the generated output,
+        // so fold them into `o` (matches CC Switch and real spend). `rz` keeps
+        // the reasoning share for display only.
+        const outputWithReasoning = output + reasoning;
         addBucket(state.buckets, localDateKey(ts), OPENCODE, model, project, {
           r: 1,
           i: input,
-          o: output,
+          o: outputWithReasoning,
           cr: cacheRead,
           cw: cacheWrite,
           rz: reasoning,
@@ -115,7 +119,7 @@ export async function scanOpencode(state: ScanState): Promise<void> {
           p: project,
           s: typeof row.session_id === "string" ? row.session_id : "",
           i: input,
-          o: output,
+          o: outputWithReasoning,
           cr: cacheRead,
           cw: cacheWrite,
           rz: reasoning,

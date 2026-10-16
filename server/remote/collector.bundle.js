@@ -11,7 +11,7 @@ var import_node_path3 = require("path");
 // server/scan/state.ts
 var import_promises = require("fs/promises");
 var import_node_path = require("path");
-var STATE_VERSION = 7;
+var STATE_VERSION = 8;
 var MAX_RECENT_PER_AGENT = 400;
 function emptyState() {
   return {
@@ -20,6 +20,7 @@ function emptyState() {
     files: {},
     recent: {},
     opencode: { watermark: 0 },
+    pi: { seen: [] },
     hosts: {},
     meta: { lastScanAt: null, scanError: null }
   };
@@ -66,7 +67,7 @@ function recordCall(state, harness, record, replaceId) {
   if (list.length > MAX_RECENT_PER_AGENT) list.splice(0, list.length - MAX_RECENT_PER_AGENT);
 }
 async function loadState(dir) {
-  var _a, _b, _c;
+  var _a, _b, _c, _d;
   try {
     const text = await (0, import_promises.readFile)((0, import_node_path.join)(dir, "state.json"), "utf8");
     const parsed = JSON.parse(text);
@@ -76,10 +77,11 @@ async function loadState(dir) {
     state.files = parsed.files ?? {};
     state.recent = parsed.recent ?? {};
     state.opencode = { watermark: typeof ((_a = parsed.opencode) == null ? void 0 : _a.watermark) === "number" ? parsed.opencode.watermark : 0 };
+    state.pi = { seen: Array.isArray((_b = parsed.pi) == null ? void 0 : _b.seen) ? parsed.pi.seen.filter((k) => typeof k === "string") : [] };
     state.hosts = parsed.hosts ?? {};
     state.meta = {
-      lastScanAt: typeof ((_b = parsed.meta) == null ? void 0 : _b.lastScanAt) === "number" ? parsed.meta.lastScanAt : null,
-      scanError: typeof ((_c = parsed.meta) == null ? void 0 : _c.scanError) === "string" ? parsed.meta.scanError : null
+      lastScanAt: typeof ((_c = parsed.meta) == null ? void 0 : _c.lastScanAt) === "number" ? parsed.meta.lastScanAt : null,
+      scanError: typeof ((_d = parsed.meta) == null ? void 0 : _d.scanError) === "string" ? parsed.meta.scanError : null
     };
     return state;
   } catch {
@@ -452,10 +454,11 @@ async function scanOpencode(state) {
         const ts = num((_a = data.time) == null ? void 0 : _a.created) || num(row.time_created);
         const model = typeof data.modelID === "string" && data.modelID ? data.modelID : "unknown";
         const project = typeof ((_b = data.path) == null ? void 0 : _b.cwd) === "string" ? data.path.cwd : "";
+        const outputWithReasoning = output + reasoning;
         addBucket(state.buckets, localDateKey(ts), OPENCODE, model, project, {
           r: 1,
           i: input,
-          o: output,
+          o: outputWithReasoning,
           cr: cacheRead,
           cw: cacheWrite,
           rz: reasoning,
@@ -467,7 +470,7 @@ async function scanOpencode(state) {
           p: project,
           s: typeof row.session_id === "string" ? row.session_id : "",
           i: input,
-          o: output,
+          o: outputWithReasoning,
           cr: cacheRead,
           cw: cacheWrite,
           rz: reasoning,
@@ -487,6 +490,7 @@ async function scanOpencode(state) {
 var import_node_os4 = require("os");
 var import_node_path6 = require("path");
 var PI = "pi";
+var PI_SEEN_LIMIT = 4e5;
 function piRoots(env = process.env) {
   var _a, _b;
   const home = (0, import_node_os4.homedir)();
@@ -503,6 +507,7 @@ async function scanPiFile(state, path) {
   const base = path.split("/").pop() ?? "";
   const underscore = base.lastIndexOf("_");
   const session = (underscore >= 0 ? base.slice(underscore + 1) : base).replace(/\.jsonl$/, "");
+  const seen = new Set(state.pi.seen);
   const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
     var _a;
     if (!project && line.includes('"type":"session"')) {
@@ -527,6 +532,14 @@ async function scanPiFile(state, path) {
     if (!usage || typeof usage !== "object") return;
     const ts = Date.parse(entry.timestamp);
     if (!Number.isFinite(ts)) return;
+    const entryId = typeof entry.id === "string" ? entry.id : "";
+    const timestamp = typeof entry.timestamp === "string" ? entry.timestamp : "";
+    if (entryId && timestamp) {
+      const key = `${entryId}@${timestamp}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      state.pi.seen.push(key);
+    }
     const cost = typeof ((_a = usage.cost) == null ? void 0 : _a.total) === "number" && usage.cost.total > 0 ? usage.cost.total : 0;
     const model = typeof message.model === "string" && message.model ? message.model : "unknown";
     addBucket(state.buckets, localDateKey(ts), PI, model, project, {
@@ -553,6 +566,9 @@ async function scanPiFile(state, path) {
     });
   });
   if (!result) return;
+  if (state.pi.seen.length > PI_SEEN_LIMIT) {
+    state.pi.seen = state.pi.seen.slice(-PI_SEEN_LIMIT);
+  }
   state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project };
 }
 

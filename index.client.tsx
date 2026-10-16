@@ -6,7 +6,7 @@ import { UsageSidebarItem } from "./client/sidebar";
 export default function contribute(client: PluginClientContext) {
   const cleanups = [
     client.addScreen({ id: "usage", title: "Agent 用量", Component: UsageScreen }),
-    client.addSidebarFooterItem({ id: "usage", title: "用量", Component: UsageSidebarItem }),
+    client.addSidebarFooterItem({ id: "usage", title: "agent usage", Component: UsageSidebarItem }),
     client.addSettingsScreen({ id: "config", title: "配置", icon: "Settings", Component: ConfigScreen }),
     client.addCommandCenterItem({
       id: "open-usage",

@@ -12,7 +12,7 @@ export function UsageSidebarItem({ currentScreen, openScreen, theme }: PluginSid
   return (
     <SidebarRow
       icon="Activity"
-      label="用量"
+      label="agent usage"
       active={currentScreen?.screenId === "usage"}
       trailing={trailing ? <Text style={{ fontSize: 11, color: theme.colors.foregroundMuted }}>{trailing}</Text> : undefined}
       onPress={() => openScreen({ screenId: "usage" })}

@@ -1,6 +1,6 @@
 import { useRpc } from "@getpaseo/plugin/client";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { usageAgentRpc, usageAgentsGetRpc, usageAgentsSetRpc, usagePrefsGetRpc, usagePrefsSetRpc, usageRefreshRpc, usageReportRpc, type UsageRangeKey } from "../shared/usage";
+import { usageAgentRpc, usageAgentsGetRpc, usageAgentsSetRpc, usagePrefsGetRpc, usagePrefsSetRpc, usageRefreshRpc, usageReportRpc, usageUpdateCheckRpc, type UsageRangeKey } from "../shared/usage";
 
 export interface CustomRange {
   from: string;
@@ -60,4 +60,15 @@ export function usePrefs(systemLocale?: "zh" | "en") {
 
 export function useSetPrefs() {
   return useRpc(usagePrefsSetRpc);
+}
+
+export function useUpdateCheck() {
+  const call = useRpc(usageUpdateCheckRpc);
+  return useQuery({
+    queryKey: ["agent-usage", "update-check"],
+    queryFn: () => call({}),
+    staleTime: 3_600_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
 }

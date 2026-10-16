@@ -79,6 +79,8 @@ const zh = {
   "app.refreshing": "刷新中…",
   "app.a11yOpenConfig": "打开配置",
   "app.a11yRefresh": "刷新用量",
+  "update.available": "发现新版本 v{latest}（当前 v{current}）· 更新：paseo plugin update agent-usage-plugin",
+  "update.dismiss": "关闭",
 
   "range.today": "今日",
   "range.7d": "近 7 天",
@@ -219,6 +221,8 @@ const en: Record<DictKey, string> = {
   "app.refreshing": "Refreshing…",
   "app.a11yOpenConfig": "Open settings",
   "app.a11yRefresh": "Refresh usage",
+  "update.available": "New version v{latest} is available (current v{current}) · Update: paseo plugin update agent-usage-plugin",
+  "update.dismiss": "Dismiss",
 
   "range.today": "Today",
   "range.7d": "Last 7 days",

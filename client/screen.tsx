@@ -7,7 +7,7 @@ import { AgentTab } from "./agent-tab";
 import { ConfigScreen } from "./config";
 import { DateRangePicker } from "./date-range";
 import { AGENT_COLORS, FALLBACK_COLOR, TrendChart, type ChartMode } from "./charts";
-import { useRefreshUsage, useUsageReport } from "./data";
+import { useRefreshUsage, useUsageReport, useUpdateCheck } from "./data";
 import { formatCredits, formatPercent, formatTokens, shortProject } from "./format";
 import { useI18n, type Translate } from "./i18n";
 
@@ -50,6 +50,8 @@ export function UsageScreen(props: PluginScreenProps) {
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
   const [showNotes, setShowNotes] = useState(true);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const updateQuery = useUpdateCheck();
   const deviceOrigin = device === "aggregate" ? undefined : device;
   const customPayload = useMemo(() => {
     if (range !== "custom" || !customFrom || !customTo) return undefined;
@@ -84,6 +86,20 @@ export function UsageScreen(props: PluginScreenProps) {
         pillTextActive: { color: theme.colors.accentForeground },
         banner: { backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 10 },
         bannerText: { fontSize: 11, color: theme.colors.foregroundMuted },
+        updateBanner: {
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+          backgroundColor: theme.colors.surface1,
+          borderColor: theme.colors.border,
+          borderWidth: 1,
+          borderRadius: 8,
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+        },
+        updateText: { flex: 1, fontSize: 11, color: theme.colors.foreground, lineHeight: 16 },
+        updateDismiss: { paddingHorizontal: 4, paddingVertical: 2 },
+        updateDismissText: { fontSize: 12, color: theme.colors.foregroundMuted },
         cardRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
         card: { flexGrow: 1, minWidth: compact ? 104 : 150, backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 12, gap: 4 },
         cardLabel: { fontSize: 11, color: theme.colors.foregroundMuted },
@@ -189,6 +205,22 @@ export function UsageScreen(props: PluginScreenProps) {
             </Pressable>
           </View>
         </View>
+
+        {updateQuery.data?.updateAvailable && !updateDismissed ? (
+          <View style={styles.updateBanner}>
+            <Text style={styles.updateText}>
+              {t("update.available", { latest: updateQuery.data.latestVersion, current: updateQuery.data.currentVersion })}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("update.dismiss")}
+              onPress={() => setUpdateDismissed(true)}
+              style={styles.updateDismiss}
+            >
+              <Text style={styles.updateDismissText}>✕</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabRow}>
           {deviceTabs.map((item) => {

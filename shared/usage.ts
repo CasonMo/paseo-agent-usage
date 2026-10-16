@@ -200,6 +200,18 @@ export const usagePrefsSetRpc = defineRpc({
   output: z.object({ saved: z.boolean(), error: z.string().nullable() }),
 });
 
+export const usageUpdateCheckRpc = defineRpc({
+  name: "usage.update.check",
+  input: z.object({}),
+  output: z.object({
+    currentVersion: z.string(),
+    latestVersion: z.string(),
+    latestCommit: z.string(),
+    updateAvailable: z.boolean(),
+    checkedAt: z.string(),
+  }),
+});
+
 export type UsagePrefs = z.infer<typeof usagePrefsSchema>;
 export type UsageLanguage = z.infer<typeof usageLanguageSchema>;
 

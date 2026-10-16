@@ -1,6 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createUsageService } from "./server/service";
-import { usageAgentRpc, usageAgentsGetRpc, usageAgentsSetRpc, usageHostsListRpc, usageHostsSetRpc, usageHostsTestRpc, usagePrefsGetRpc, usagePrefsSetRpc, usageRefreshRpc, usageReportRpc } from "./shared/usage";
+import { checkForUpdate } from "./server/update-check";
+import { usageAgentRpc, usageAgentsGetRpc, usageAgentsSetRpc, usageHostsListRpc, usageHostsSetRpc, usageHostsTestRpc, usagePrefsGetRpc, usagePrefsSetRpc, usageRefreshRpc, usageReportRpc, usageUpdateCheckRpc } from "./shared/usage";
 
 export default function contribute(server: PluginServerContext) {
   const service = createUsageService();
@@ -14,6 +15,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(usageAgentsSetRpc, (input) => service.agentsSet(input.agents));
   server.handle(usagePrefsGetRpc, (input) => service.prefsGet(input.locale));
   server.handle(usagePrefsSetRpc, (input) => service.prefsSet({ language: input.language, refreshMinutes: input.refreshMinutes }));
+  server.handle(usageUpdateCheckRpc, () => checkForUpdate());
   const offTurnEnded = server.on("agent.turn_ended", () => {
     service.markDirty();
   });

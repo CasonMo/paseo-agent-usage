@@ -1,4 +1,5 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { st } from "../i18n";
 import { join } from "node:path";
 import { parseHostsConfig, type HostConfig } from "./ssh";
 
@@ -39,8 +40,8 @@ export function applyHostForms(existing: HostConfig[], forms: HostForm[]): { hos
   for (const form of forms) {
     const name = form.name.trim();
     const target = form.target.trim();
-    if (!name || !target) return { hosts: [], error: "每台主机都需要填写名称和地址（target）" };
-    if (seen.has(name)) return { hosts: [], error: `主机名重复：${name}` };
+    if (!name || !target) return { hosts: [], error: st("每台主机都需要填写名称和地址（target）", "Each host needs a name and a target") };
+    if (seen.has(name)) return { hosts: [], error: st(`主机名重复：${name}`, `Duplicate host name: ${name}`) };
     seen.add(name);
     const previous = existing.find((host) => host.name === name);
     let password: string | undefined;

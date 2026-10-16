@@ -181,6 +181,28 @@ export const usageAgentsSetRpc = defineRpc({
   output: z.object({ saved: z.boolean(), error: z.string().nullable() }),
 });
 
+export const usageLanguageSchema = z.enum(["auto", "zh", "en"]);
+
+export const usagePrefsSchema = z.object({
+  language: usageLanguageSchema,
+  refreshMinutes: z.number().int().min(0).max(1440),
+});
+
+export const usagePrefsGetRpc = defineRpc({
+  name: "usage.prefs.get",
+  input: z.object({ locale: z.enum(["zh", "en"]).optional() }),
+  output: usagePrefsSchema,
+});
+
+export const usagePrefsSetRpc = defineRpc({
+  name: "usage.prefs.set",
+  input: usagePrefsSchema,
+  output: z.object({ saved: z.boolean(), error: z.string().nullable() }),
+});
+
+export type UsagePrefs = z.infer<typeof usagePrefsSchema>;
+export type UsageLanguage = z.infer<typeof usageLanguageSchema>;
+
 export type UsageAgentToggle = z.infer<typeof agentToggleSchema>;
 export type UsageAgentSetItem = z.infer<typeof agentSetItemSchema>;
 

@@ -2,6 +2,7 @@ import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useMemo, useState } from "react";
 import type { TextStyle, ViewStyle } from "react-native";
 import { Pressable, Text, View } from "react-native";
+import { useI18n } from "./i18n";
 
 type Theme = PluginSurfaceProps["theme"];
 
@@ -24,7 +25,10 @@ function addDays(date: Date, days: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 }
 
-const WEEK_LABELS = ["一", "二", "三", "四", "五", "六", "日"];
+const WEEK_LABELS: Record<"zh" | "en", string[]> = {
+  zh: ["一", "二", "三", "四", "五", "六", "日"],
+  en: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
+};
 
 export function DateRangePicker({
   theme,
@@ -84,6 +88,8 @@ export function DateRangePicker({
     return rows;
   }, [month]);
 
+  const { locale, t } = useI18n();
+  const weekLabels = WEEK_LABELS[locale];
   const todayKey = dateKeyOf(new Date());
 
   const pick = (key: string) => {
@@ -105,15 +111,13 @@ export function DateRangePicker({
         <Pressable style={styles.navButton} onPress={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>
           <Text style={styles.navText}>‹</Text>
         </Pressable>
-        <Text style={styles.monthText}>
-          {month.getFullYear()}年{month.getMonth() + 1}月
-        </Text>
+        <Text style={styles.monthText}>{t("date.ym", { year: month.getFullYear(), month: month.getMonth() + 1 })}</Text>
         <Pressable style={styles.navButton} onPress={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>
           <Text style={styles.navText}>›</Text>
         </Pressable>
       </View>
       <View style={styles.weekRow}>
-        {WEEK_LABELS.map((label) => (
+        {weekLabels.map((label) => (
           <Text key={label} style={styles.weekLabel}>
             {label}
           </Text>
@@ -148,11 +152,11 @@ export function DateRangePicker({
       ))}
       <View style={styles.footerRow}>
         <Text style={styles.rangeText}>
-          {from ? (to ? `${from} ~ ${to}` : `${from} ~ 请选择结束日期`) : "请选择起始日期"}
+          {from ? (to ? `${from} ~ ${to}` : t("date.pickEnd", { from })) : t("date.pickStart")}
         </Text>
         {from || to ? (
           <Pressable style={styles.navButton} onPress={() => onChange({ from: "", to: "" })}>
-            <Text style={styles.navText}>清除</Text>
+            <Text style={styles.navText}>{t("date.clear")}</Text>
           </Pressable>
         ) : null}
       </View>

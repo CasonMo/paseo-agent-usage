@@ -6,6 +6,7 @@ import type { UsageRangeKey } from "../shared/usage";
 import { AGENT_COLORS, FALLBACK_COLOR, TrendChart, type ChartMode } from "./charts";
 import { useAgentReport, type CustomRange } from "./data";
 import { formatCredits, formatPercent, formatTokens, shortProject } from "./format";
+import { useI18n } from "./i18n";
 
 type Theme = PluginScreenProps["theme"];
 
@@ -36,6 +37,7 @@ export function AgentTab({
   chartMode: ChartMode;
 }) {
   const query = useAgentReport(agent, range, true, origin, custom);
+  const { t } = useI18n();
   const data = query.data;
   const styles = useMemo(
     () =>
@@ -64,7 +66,7 @@ export function AgentTab({
   if (!data) {
     return (
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>加载中…</Text>
+        <Text style={styles.sectionTitle}>{t("common.loading")}</Text>
       </View>
     );
   }
@@ -73,11 +75,11 @@ export function AgentTab({
   const totalTokens = totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
   const color = AGENT_COLORS[agent] ?? FALLBACK_COLOR;
   const cards: Array<{ label: string; value: string }> = [
-    { label: "总 Tokens", value: formatTokens(totalTokens) },
-    { label: "请求数", value: `${totals.requests}` },
-    { label: "缓存读取占比", value: formatPercent(totals.cacheRead, totalTokens) },
+    { label: t("card.totalTokens"), value: formatTokens(totalTokens) },
+    { label: t("card.requests"), value: `${totals.requests}` },
+    { label: t("card.cacheShare"), value: formatPercent(totals.cacheRead, totalTokens) },
   ];
-  if (totals.credits > 0) cards.push({ label: "积分", value: formatCredits(totals.credits) });
+  if (totals.credits > 0) cards.push({ label: t("card.credits"), value: formatCredits(totals.credits) });
 
   return (
     <>
@@ -91,13 +93,13 @@ export function AgentTab({
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>{data.label} 趋势</Text>
+        <Text style={styles.sectionTitle}>{t("section.agentTrend", { label: data.label })}</Text>
         <TrendChart series={data.series} theme={theme} compact={compact} mode={chartMode} />
       </View>
 
       {data.models.length > 0 ? (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>模型明细</Text>
+          <Text style={styles.sectionTitle}>{t("section.models")}</Text>
           {data.models.slice(0, compact ? 8 : 12).map((model) => (
             <View key={model.model} style={styles.row}>
               <View style={[styles.dot, { backgroundColor: color }]} />
@@ -105,8 +107,8 @@ export function AgentTab({
                 {model.model}
               </Text>
               <Text style={styles.rowValue}>
-                {formatTokens(model.totalTokens)} tok · {model.requests} 次
-                {model.credits > 0 ? ` · ${formatCredits(model.credits)} 分` : ""}
+                {formatTokens(model.totalTokens)} tok · {t("unit.requests", { n: model.requests })}
+                {model.credits > 0 ? ` · ${t("unit.creditsShort", { n: formatCredits(model.credits) })}` : ""}
               </Text>
             </View>
           ))}
@@ -115,7 +117,7 @@ export function AgentTab({
 
       {data.projects.length > 0 ? (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>项目明细</Text>
+          <Text style={styles.sectionTitle}>{t("section.projects")}</Text>
           {data.projects.slice(0, compact ? 6 : 10).map((project) => (
             <View key={project.project || "unknown"} style={styles.row}>
               <Text style={styles.rowName} numberOfLines={1}>
@@ -123,7 +125,7 @@ export function AgentTab({
               </Text>
               <Text style={styles.rowValue}>
                 {formatTokens(project.totalTokens)} tok
-                {project.credits > 0 ? ` · ${formatCredits(project.credits)} 分` : ""}
+                {project.credits > 0 ? ` · ${t("unit.creditsShort", { n: formatCredits(project.credits) })}` : ""}
               </Text>
             </View>
           ))}
@@ -131,15 +133,15 @@ export function AgentTab({
       ) : null}
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>请求日志（最近 {data.requests.length} 条）</Text>
+        <Text style={styles.sectionTitle}>{t("section.requestLog", { n: data.requests.length })}</Text>
         {data.requests.length === 0 ? (
-          <Text style={styles.footer}>所选范围内暂无记录；日志只保留最近约 400 条调用。</Text>
+          <Text style={styles.footer}>{t("log.empty")}</Text>
         ) : (
           data.requests.map((record, index) => {
             const tokens = record.input + record.output + record.cacheRead + record.cacheWrite;
             const parts: string[] = [];
             if (tokens > 0) parts.push(`${formatTokens(tokens)} tok`);
-            if (record.credits > 0) parts.push(`${formatCredits(record.credits)} 分`);
+            if (record.credits > 0) parts.push(t("unit.creditsShort", { n: formatCredits(record.credits) }));
             return (
               <View key={`${record.ts}-${index}`} style={styles.logRow}>
                 <View style={styles.logHeader}>
@@ -151,14 +153,16 @@ export function AgentTab({
                 </View>
                 <Text style={styles.logMeta} numberOfLines={1}>
                   {shortProject(record.project)}
-                  {record.session ? ` · ${record.session.slice(0, 8)}` : ""} · {record.origin === "local" ? "本机" : record.origin}
-                  {tokens > 0 ? ` · 入 ${formatTokens(record.input)} · 出 ${formatTokens(record.output)} · 缓存 ${formatTokens(record.cacheRead)}` : ""}
+                  {record.session ? ` · ${record.session.slice(0, 8)}` : ""} · {record.origin === "local" ? t("origin.local") : record.origin}
+                  {tokens > 0
+                    ? ` · ${t("unit.in")} ${formatTokens(record.input)} · ${t("unit.out")} ${formatTokens(record.output)} · ${t("unit.cache")} ${formatTokens(record.cacheRead)}`
+                    : ""}
                 </Text>
               </View>
             );
           })
         )}
-        <Text style={styles.footer}>日志仅保留最近约 400 条调用，更早的会滚动淘汰。</Text>
+        <Text style={styles.footer}>{t("log.footer")}</Text>
       </View>
     </>
   );

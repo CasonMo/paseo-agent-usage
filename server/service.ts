@@ -1,7 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { UsageAgentReport, UsageAgentSetItem, UsageAgentToggle, UsageHostForm, UsageHostListItem, UsageRangeKey, UsageReport } from "../shared/usage";
+import type { UsageAgentReport, UsageAgentSetItem, UsageAgentToggle, UsageHostForm, UsageHostListItem, UsagePrefs, UsageRangeKey, UsageReport } from "../shared/usage";
 import { buildAgentReport, buildReport, type HostView } from "./report";
+import { setServerLocale, st } from "./i18n";
 import { applyHostForms, readHostsFile, writeHostsFile } from "./remote/hosts-file";
 import { pullHost, testHost, type HostConfig } from "./remote/ssh";
 import { scanAll } from "./scan/scanner";
@@ -13,6 +14,8 @@ export interface UsageService {
   agentReport(agent: string, range: UsageRangeKey, origin?: string, custom?: { from?: string; to?: string }): Promise<UsageAgentReport>;
   agentsGet(): Promise<{ agents: UsageAgentToggle[] }>;
   agentsSet(agents: UsageAgentSetItem[]): Promise<{ saved: boolean; error: string | null }>;
+  prefsGet(locale?: "zh" | "en"): Promise<UsagePrefs>;
+  prefsSet(prefs: UsagePrefs): Promise<{ saved: boolean; error: string | null }>;
   refresh(): Promise<{ started: boolean }>;
   hostsList(): Promise<{ hosts: UsageHostListItem[] }>;
   hostsSet(forms: UsageHostForm[]): Promise<{ saved: boolean; error: string | null }>;
@@ -31,6 +34,7 @@ interface Projection {
 const HOST_MIN_INTERVAL_MS = 10 * 60 * 1000;
 const HOSTS_FILE = "hosts.json";
 const AGENTS_FILE = "agents.json";
+const PREFS_FILE = "prefs.json";
 const AGENT_ORDER = ["claude", "codex", "opencode", "pi"];
 const AGENT_LABELS: Record<string, string> = {
   claude: "Claude Code",
@@ -42,6 +46,23 @@ const AGENT_LABELS: Record<string, string> = {
 /** Agents included in statistics and scanning. */
 function defaultAgentsConfig(): Record<string, boolean> {
   return { claude: true, codex: true, opencode: true, pi: true };
+}
+
+function defaultPrefs(): UsagePrefs {
+  return { language: "auto", refreshMinutes: 30 };
+}
+
+function sanitizePrefs(raw: unknown): UsagePrefs {
+  const next = defaultPrefs();
+  if (raw && typeof raw === "object") {
+    const record = raw as Record<string, unknown>;
+    if (record.language === "auto" || record.language === "zh" || record.language === "en") next.language = record.language;
+    if (typeof record.refreshMinutes === "number" && Number.isFinite(record.refreshMinutes)) {
+      const minutes = Math.round(record.refreshMinutes);
+      if (minutes >= 0 && minutes <= 1440) next.refreshMinutes = minutes;
+    }
+  }
+  return next;
 }
 
 function sanitizeBuckets(raw: unknown): Record<string, DayBucket> {
@@ -111,7 +132,9 @@ export function createUsageService(): UsageService {
   let done = 0;
   let total = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let hostsTimer: ReturnType<typeof setInterval> | null = null;
+  let refreshTimer: ReturnType<typeof setInterval> | null = null;
+  let prefs: UsagePrefs = defaultPrefs();
+  let prefsAt = 0;
   let hostConfigs: HostConfig[] = [];
   let hostConfigsAt = 0;
   let agentsConfig: Record<string, boolean> = defaultAgentsConfig();
@@ -154,6 +177,76 @@ export function createUsageService(): UsageService {
     await rename(temporary, file);
   }
 
+  async function refreshPrefs(force: boolean): Promise<UsagePrefs> {
+    if (!force && Date.now() - prefsAt < 60_000) return prefs;
+    prefsAt = Date.now();
+    try {
+      const parsed = JSON.parse(await readFile(join(dir, PREFS_FILE), "utf8")) as unknown;
+      prefs = sanitizePrefs(parsed);
+    } catch {
+      prefs = defaultPrefs();
+    }
+    applyPrefs();
+    return prefs;
+  }
+
+  function applyPrefs(): void {
+    if (prefs.language === "zh" || prefs.language === "en") setServerLocale(prefs.language);
+    scheduleRefreshTimer();
+  }
+
+  async function writePrefs(next: UsagePrefs): Promise<void> {
+    await mkdir(dir, { recursive: true, mode: 0o700 }).catch(() => {});
+    const file = join(dir, PREFS_FILE);
+    const temporary = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+    await writeFile(temporary, JSON.stringify(next, null, 2), { mode: 0o600 });
+    await rename(temporary, file);
+  }
+
+  async function prefsGet(locale?: "zh" | "en"): Promise<UsagePrefs> {
+    await loaded;
+    await refreshPrefs(false);
+    if (prefs.language === "auto" && locale) setServerLocale(locale);
+    return { ...prefs };
+  }
+
+  async function prefsSet(next: UsagePrefs): Promise<{ saved: boolean; error: string | null }> {
+    await loaded;
+    const sanitized = sanitizePrefs(next);
+    try {
+      await writePrefs(sanitized);
+    } catch (error) {
+      return { saved: false, error: st("保存失败：", "Save failed: ") + (error instanceof Error ? error.message : String(error)) };
+    }
+    prefs = sanitized;
+    prefsAt = Date.now();
+    applyPrefs();
+    return { saved: true, error: null };
+  }
+
+  /** Pull cadence for hosts follows the user's refresh setting (bounded by the 10-min default). */
+  function hostDueIntervalMs(): number {
+    if (prefs.refreshMinutes <= 0) return HOST_MIN_INTERVAL_MS;
+    return Math.max(60_000, Math.min(HOST_MIN_INTERVAL_MS, prefs.refreshMinutes * 60_000 - 5_000));
+  }
+
+  /** (Re)creates the periodic refresh timer; 0 minutes disables scheduled refresh. */
+  function scheduleRefreshTimer(): void {
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
+    if (stopped || prefs.refreshMinutes <= 0) return;
+    const intervalMs = Math.max(60_000, prefs.refreshMinutes * 60_000);
+    refreshTimer = setInterval(() => {
+      if (stopped) return;
+      dirty = true; // bypass the freshness gate so the tick always rescans
+      void startScan(false);
+      void pullHosts(false);
+    }, intervalMs);
+    refreshTimer.unref?.();
+  }
+
   async function refreshHostConfigs(force: boolean): Promise<HostConfig[]> {
     if (!force && Date.now() - hostConfigsAt < 60_000) return hostConfigs;
     hostConfigsAt = Date.now();
@@ -181,7 +274,7 @@ export function createUsageService(): UsageService {
       if (pullingHosts.has(host.name)) return false;
       const entry = state.hosts[host.name];
       const lastAttempt = entry?.lastAttemptAt ?? entry?.lastPullAt;
-      return force || !lastAttempt || now - lastAttempt > HOST_MIN_INTERVAL_MS;
+      return force || !lastAttempt || now - lastAttempt > hostDueIntervalMs();
     });
     if (due.length === 0) return;
     for (const host of due) pullingHosts.add(host.name);
@@ -204,7 +297,7 @@ export function createUsageService(): UsageService {
         if (result.ok) {
           const projection = parseProjection(result.stdout);
           if (!projection) {
-            state.hosts[host.name] = { ...base, target: host.target, lastError: "远端返回内容无法解析" };
+            state.hosts[host.name] = { ...base, target: host.target, lastError: st("远端返回内容无法解析", "Remote projection could not be parsed") };
             console.warn(`[agent-usage] host ${host.name} returned an unparsable projection`);
           } else {
             const next: RemoteHostState = {
@@ -221,7 +314,7 @@ export function createUsageService(): UsageService {
             console.log(`[agent-usage] host ${host.name} pulled: ${Object.keys(next.buckets).length} buckets, ${Object.keys(next.recent).length} agents`);
           }
         } else {
-          state.hosts[host.name] = { ...base, target: host.target, lastAttemptAt: Date.now(), lastError: result.error ?? "拉取失败" };
+          state.hosts[host.name] = { ...base, target: host.target, lastAttemptAt: Date.now(), lastError: result.error ?? st("拉取失败", "Pull failed") };
           console.warn(`[agent-usage] host ${host.name} pull failed: ${result.error ?? "unknown"}`);
         }
         await saveState(dir, state).catch((error) => console.error("[agent-usage] state save failed", error));
@@ -359,7 +452,7 @@ export function createUsageService(): UsageService {
     const { hosts, error } = applyHostForms(previous ? [previous] : [], [form]);
     if (error) return { ok: false, detail: error };
     const host = hosts[0];
-    if (!host) return { ok: false, detail: "配置不完整" };
+    if (!host) return { ok: false, detail: st("配置不完整", "Incomplete configuration") };
     return await testHost(host, dir);
   }
 
@@ -380,7 +473,7 @@ export function createUsageService(): UsageService {
     try {
       await writeAgentsConfig(next);
     } catch (error) {
-      return { saved: false, error: `保存失败：${error instanceof Error ? error.message : String(error)}` };
+      return { saved: false, error: st("保存失败：", "Save failed: ") + (error instanceof Error ? error.message : String(error)) };
     }
     agentsConfig = next;
     agentsConfigAt = Date.now();
@@ -404,19 +497,15 @@ export function createUsageService(): UsageService {
     stopped = true;
     if (timer) clearTimeout(timer);
     timer = null;
-    if (hostsTimer) clearInterval(hostsTimer);
-    hostsTimer = null;
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = null;
   }
 
   void loaded.then(() => {
+    void refreshPrefs(true);
     schedule(1_000);
     void pullHosts(false);
   });
 
-  hostsTimer = setInterval(() => {
-    void pullHosts(false);
-  }, 5 * 60_000);
-  hostsTimer.unref?.();
-
-  return { report, agentReport, agentsGet, agentsSet, refresh, hostsList, hostsSet, hostTest, markDirty, stop };
+  return { report, agentReport, agentsGet, agentsSet, refresh, hostsList, hostsSet, hostTest, prefsGet, prefsSet, markDirty, stop };
 }

@@ -7,6 +7,7 @@ import type { TextStyle, ViewStyle } from "react-native";
 import { Pressable, Switch, Text, View } from "react-native";
 import type { UsageHostListItem } from "../shared/usage";
 import { usageHostsListRpc, usageHostsSetRpc, usageHostsTestRpc } from "../shared/usage";
+import { useI18n } from "./i18n";
 
 type Theme = PluginSurfaceProps["theme"];
 
@@ -155,6 +156,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
     [theme, compact],
   );
 
+  const { t } = useI18n();
   const hosts = listQuery.data?.hosts ?? [];
 
   const persist = async (drafts: HostDraft[]): Promise<boolean> => {
@@ -163,14 +165,14 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
     try {
       const result = await setCall({ hosts: drafts.map(draftToPayload) });
       if (result.saved) {
-        setMessage({ kind: "ok", text: "已保存（新主机或变更的主机会自动拉取）" });
+        setMessage({ kind: "ok", text: t("hosts.saved") });
         await queryClient.invalidateQueries({ queryKey: ["agent-usage-hosts"] });
         return true;
       }
-      setMessage({ kind: "error", text: result.error ?? "保存失败" });
+      setMessage({ kind: "error", text: result.error ?? t("common.saveFailed") });
       return false;
     } catch (error) {
-      setMessage({ kind: "error", text: `保存失败：${error instanceof Error ? error.message : String(error)}` });
+      setMessage({ kind: "error", text: t("common.saveFailedDetail", { message: error instanceof Error ? error.message : String(error) }) });
       return false;
     } finally {
       setBusy(false);
@@ -180,7 +182,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
   const saveDraft = async () => {
     if (!draft) return;
     if (!draft.name.trim() || !draft.target.trim()) {
-      setMessage({ kind: "error", text: "请填写名称和地址（target）" });
+      setMessage({ kind: "error", text: t("hosts.needNameTarget") });
       return;
     }
     const others = hosts.filter((host) => host.name !== (draft.originalName ?? draft.name)).map(draftFromHost);
@@ -241,7 +243,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
 
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>远端主机（SSH）</Text>
+          <Text style={styles.sectionTitle}>{t("hosts.title")}</Text>
           <Pressable
             style={styles.smallButton}
             onPress={() => {
@@ -249,11 +251,11 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
               setMessage(null);
             }}
           >
-            <Text style={styles.smallButtonText}>新增主机</Text>
+            <Text style={styles.smallButtonText}>{t("hosts.add")}</Text>
           </Pressable>
         </View>
         {hosts.length === 0 ? (
-          <Text style={styles.footer}>还没有远端主机。点击「新增主机」添加，支持 SSH 密钥或账号密码认证。</Text>
+          <Text style={styles.footer}>{t("hosts.empty")}</Text>
         ) : null}
         {hosts.map((host) => (
           <View key={host.name} style={styles.hostCard}>
@@ -266,13 +268,13 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
               </Text>
             </View>
             <Text style={styles.hostMeta} numberOfLines={1}>
-              {host.passwordCommand ? "取密命令" : host.hasPassword ? "密码认证" : "密钥认证"}
+              {host.passwordCommand ? t("hosts.auth.passwordCommand") : host.hasPassword ? t("hosts.auth.password") : t("hosts.auth.key")}
               {host.nodePath ? ` · node: ${host.nodePath}` : ""}
               {host.cacheDir ? ` · cache: ${host.cacheDir}` : ""}
             </Text>
             <View style={styles.buttonRow}>
               <Pressable style={styles.smallButton} disabled={testing === host.name} onPress={() => void runTest(draftFromHost(host), host.name)}>
-                <Text style={styles.smallButtonText}>{testing === host.name ? "测试中…" : "测试连接"}</Text>
+                <Text style={styles.smallButtonText}>{testing === host.name ? t("common.testing") : t("common.test")}</Text>
               </Pressable>
               <Pressable
                 style={styles.smallButton}
@@ -281,10 +283,10 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
                   setMessage(null);
                 }}
               >
-                <Text style={styles.smallButtonText}>编辑</Text>
+                <Text style={styles.smallButtonText}>{t("common.edit")}</Text>
               </Pressable>
               <Pressable style={styles.smallButtonDanger} onPress={() => void removeHost(host.name)}>
-                <Text style={styles.smallButtonDangerText}>删除</Text>
+                <Text style={styles.smallButtonDangerText}>{t("common.delete")}</Text>
               </Pressable>
             </View>
             {renderTestResult(testResults[host.name])}
@@ -294,9 +296,9 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
 
       {draft ? (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{draft.originalName ? `编辑「${draft.originalName}」` : "新增主机"}</Text>
+          <Text style={styles.sectionTitle}>{draft.originalName ? t("hosts.edit", { name: draft.originalName }) : t("hosts.add")}</Text>
           {field(
-            "名称（唯一标识）",
+            t("hosts.nameLabel"),
             <TextInput
               style={styles.input}
               value={draft.name}
@@ -308,12 +310,12 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
             />,
           )}
           {field(
-            "地址（user@host 或 ~/.ssh/config 别名）",
+            t("hosts.targetLabel"),
             <TextInput
               style={styles.input}
               value={draft.target}
               onChangeText={(value) => setDraft({ ...draft, target: value })}
-              placeholder="例如 dev1 或 user@host"
+              placeholder={t("hosts.targetPlaceholder")}
               placeholderTextColor={theme.colors.foregroundMuted}
               autoCapitalize="none"
               autoCorrect={false}
@@ -321,7 +323,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
           )}
           <View style={styles.row2}>
             <View style={styles.flexField}>
-              <Text style={styles.fieldLabel}>端口（可选）</Text>
+              <Text style={styles.fieldLabel}>{t("hosts.portLabel")}</Text>
               <TextInput
                 style={styles.input}
                 value={draft.port}
@@ -332,7 +334,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
               />
             </View>
             <View style={styles.flexField}>
-              <Text style={styles.fieldLabel}>超时（秒）</Text>
+              <Text style={styles.fieldLabel}>{t("hosts.timeoutLabel")}</Text>
               <TextInput
                 style={styles.input}
                 value={draft.timeoutSec}
@@ -344,13 +346,13 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
             </View>
           </View>
           <View style={styles.field}>
-            <Text style={styles.fieldLabel}>认证方式</Text>
+            <Text style={styles.fieldLabel}>{t("hosts.authLabel")}</Text>
             <View style={styles.chipRow}>
               {(
                 [
-                  { mode: "key", label: "SSH 密钥" },
-                  { mode: "password", label: "账号密码" },
-                  { mode: "command", label: "取密命令" },
+                  { mode: "key", label: t("hosts.auth.key") },
+                  { mode: "password", label: t("hosts.auth.password") },
+                  { mode: "command", label: t("hosts.auth.passwordCommand") },
                 ] as const
               ).map((item) => {
                 const active = draft.passwordMode === item.mode;
@@ -368,12 +370,12 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
           </View>
           {draft.passwordMode === "password"
             ? field(
-                draft.hasPassword ? "密码（已保存，留空保持不变）" : "密码",
+                draft.hasPassword ? t("hosts.passwordSaved") : t("hosts.password"),
                 <TextInput
                   style={styles.input}
                   value={draft.password}
                   onChangeText={(value) => setDraft({ ...draft, password: value })}
-                  placeholder={draft.hasPassword ? "••••••••" : "输入密码"}
+                  placeholder={draft.hasPassword ? "••••••••" : t("hosts.passwordPlaceholder")}
                   placeholderTextColor={theme.colors.foregroundMuted}
                   secureTextEntry
                   autoCapitalize="none"
@@ -383,7 +385,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
             : null}
           {draft.passwordMode === "command"
             ? field(
-                "取密命令（在本机执行，输出即密码）",
+                t("hosts.passwordCommandLabel"),
                 <TextInput
                   style={styles.input}
                   value={draft.passwordCommand}
@@ -396,7 +398,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
               )
             : null}
           {field(
-            "密钥文件（可选）",
+            t("hosts.identityLabel"),
             <TextInput
               style={styles.input}
               value={draft.identityFile}
@@ -408,7 +410,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
             />,
           )}
           {field(
-            "远端 node 路径（可选）",
+            t("hosts.nodePathLabel"),
             <TextInput
               style={styles.input}
               value={draft.nodePath}
@@ -420,7 +422,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
             />,
           )}
           {field(
-            "远端缓存目录（可选）",
+            t("hosts.cacheDirLabel"),
             <TextInput
               style={styles.input}
               value={draft.cacheDir}
@@ -433,10 +435,10 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
           )}
           <View style={styles.buttonRow}>
             <Pressable style={styles.primaryButton} disabled={busy} onPress={() => void saveDraft()}>
-              <Text style={styles.primaryButtonText}>{busy ? "保存中…" : "保存"}</Text>
+              <Text style={styles.primaryButtonText}>{busy ? t("common.saving") : t("common.save")}</Text>
             </Pressable>
             <Pressable style={styles.smallButton} disabled={testing === "draft"} onPress={() => void runTest(draft, "draft")}>
-              <Text style={styles.smallButtonText}>{testing === "draft" ? "测试中…" : "测试连接"}</Text>
+              <Text style={styles.smallButtonText}>{testing === "draft" ? t("common.testing") : t("common.test")}</Text>
             </Pressable>
             <Pressable
               style={styles.smallButton}
@@ -445,7 +447,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
                 setMessage(null);
               }}
             >
-              <Text style={styles.smallButtonText}>取消</Text>
+              <Text style={styles.smallButtonText}>{t("common.cancel")}</Text>
             </Pressable>
           </View>
           {renderTestResult(testResults["draft"])}
@@ -453,8 +455,9 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
       ) : null}
 
       <Text style={styles.footer}>
-        说明：远端无需安装任何东西——自动探测 JS 运行时（PATH / nvm / volta / fnm / homebrew）；仅当探测不到时才需填 nodePath。
-        密码只保存在本机（hosts.json，权限 600），也可用取密命令从钥匙串读取。
+        {t("hosts.notes1")}
+        {"\n"}
+        {t("hosts.notes2")}
       </Text>
     </>
   );

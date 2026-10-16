@@ -1,3 +1,5 @@
+import { translateNow } from "./i18n";
+
 export function formatTokens(value: number): string {
   const abs = Math.abs(value);
   if (abs >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
@@ -19,6 +21,6 @@ export function formatPercent(part: number, whole: number): string {
 
 export function shortProject(path: string): string {
   const parts = path.split("/").filter(Boolean);
-  if (parts.length === 0) return "(未知项目)";
+  if (parts.length === 0) return translateNow("project.unknown");
   return parts.slice(-2).join("/");
 }

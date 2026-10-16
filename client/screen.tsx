@@ -9,28 +9,23 @@ import { DateRangePicker } from "./date-range";
 import { AGENT_COLORS, FALLBACK_COLOR, TrendChart, type ChartMode } from "./charts";
 import { useRefreshUsage, useUsageReport } from "./data";
 import { formatCredits, formatPercent, formatTokens, shortProject } from "./format";
+import { useI18n, type Translate } from "./i18n";
 
-function originStatusText(status: string, lastPullAt: number | null): string {
-  if (status === "pulling") return "拉取中…";
-  if (status === "error") return "拉取失败";
-  if (status === "never") return "未拉取";
+function originStatusText(t: Translate, status: string, lastPullAt: number | null): string {
+  if (status === "pulling") return t("origin.pulling");
+  if (status === "error") return t("origin.error");
+  if (status === "never") return t("origin.never");
   if (lastPullAt) {
     const date = new Date(lastPullAt);
     const hours = String(date.getHours()).padStart(2, "0");
     const minutes = String(date.getMinutes()).padStart(2, "0");
-    return `已同步 ${hours}:${minutes}`;
+    return t("origin.synced", { time: `${hours}:${minutes}` });
   }
-  return "正常";
+  return t("origin.ok");
 }
 
-const RANGES: Array<{ key: UsageRangeKey; label: string }> = [
-  { key: "today", label: "今日" },
-  { key: "7d", label: "近 7 天" },
-  { key: "30d", label: "近 30 天" },
-  { key: "12w", label: "近 12 周" },
-  { key: "12m", label: "近 12 月" },
-  { key: "custom", label: "自定义" },
-];
+const RANGE_KEYS: UsageRangeKey[] = ["today", "7d", "30d", "12w", "12m", "custom"];
+const RANGE_LABEL_KEYS = ["range.today", "range.7d", "range.30d", "range.12w", "range.12m", "range.custom"] as const;
 
 function defaultCustomRange(): { from: string; to: string } {
   const today = new Date();
@@ -42,10 +37,8 @@ function defaultCustomRange(): { from: string; to: string } {
   return { from: key(start), to: key(today) };
 }
 
-const CHART_MODES: Array<{ key: ChartMode; label: string }> = [
-  { key: "bar", label: "柱状图" },
-  { key: "line", label: "折线图" },
-];
+const CHART_MODE_KEYS: ChartMode[] = ["bar", "line"];
+const CHART_MODE_LABEL_KEYS = ["chart.bar", "chart.line"] as const;
 
 export function UsageScreen(props: PluginScreenProps) {
   const { theme, layout } = props;
@@ -64,6 +57,9 @@ export function UsageScreen(props: PluginScreenProps) {
   }, [range, customFrom, customTo]);
   const query = useUsageReport(range, deviceOrigin, customPayload);
   const refresh = useRefreshUsage();
+  const { t } = useI18n();
+  const ranges = useMemo(() => RANGE_KEYS.map((key, index) => ({ key, label: t(RANGE_LABEL_KEYS[index]) })), [t]);
+  const chartModes = useMemo(() => CHART_MODE_KEYS.map((key, index) => ({ key, label: t(CHART_MODE_LABEL_KEYS[index]) })), [t]);
   const compact = layout.compact;
   const styles = useMemo(
     () =>
@@ -130,26 +126,26 @@ export function UsageScreen(props: PluginScreenProps) {
   const legendAgents = agents.filter((agent) => agent.totalTokens > 0);
 
   const deviceTabs = useMemo(() => {
-    const list: Array<{ id: string; label: string }> = [{ id: "aggregate", label: "聚合" }];
+    const list: Array<{ id: string; label: string }> = [{ id: "aggregate", label: t("origin.aggregate") }];
     for (const origin of data?.origins ?? []) {
-      list.push({ id: origin.id, label: origin.id === "local" ? "本机" : origin.label });
+      list.push({ id: origin.id, label: origin.id === "local" ? t("origin.local") : origin.label });
     }
     return list;
-  }, [data?.origins]);
+  }, [data?.origins, t]);
   const hasDevice = device === "aggregate" || (data?.origins ?? []).some((origin) => origin.id === device);
   const activeDevice = hasDevice ? device : "aggregate";
   const selectedOrigin = (data?.origins ?? []).find((origin) => origin.id === activeDevice) ?? null;
   const failedOrigins = (data?.origins ?? []).filter((origin) => origin.id !== "local" && origin.status === "error");
 
   const tabs = useMemo(() => {
-    const list: Array<{ id: string; label: string }> = [{ id: "overview", label: "总览" }];
+    const list: Array<{ id: string; label: string }> = [{ id: "overview", label: t("tab.overview") }];
     const seen = new Set<string>();
     for (const agent of data?.agents ?? []) {
       list.push({ id: agent.id, label: agent.label });
       seen.add(agent.id);
     }
     return list;
-  }, [data?.agents]);
+  }, [data?.agents, t]);
 
   // Keep every hook above this early return; otherwise React throws #300
   // ("Rendered fewer hooks than expected") when toggling the settings view.
@@ -162,9 +158,9 @@ export function UsageScreen(props: PluginScreenProps) {
 
   const cards: Array<{ label: string; value: string }> = [];
   if (totals && hasData) {
-    cards.push({ label: "总 Tokens", value: formatTokens(totalTokens) });
-    cards.push({ label: "请求数", value: `${totals.requests}` });
-    cards.push({ label: "缓存读取占比", value: formatPercent(totals.cacheRead, totalTokens) });
+    cards.push({ label: t("card.totalTokens"), value: formatTokens(totalTokens) });
+    cards.push({ label: t("card.requests"), value: `${totals.requests}` });
+    cards.push({ label: t("card.cacheShare"), value: formatPercent(totals.cacheRead, totalTokens) });
   }
 
   return (
@@ -172,24 +168,24 @@ export function UsageScreen(props: PluginScreenProps) {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.headerRow}>
           <View style={{ gap: 2, flexShrink: 1 }}>
-            <Text style={styles.title}>Agent 用量</Text>
+            <Text style={styles.title}>{t("app.title")}</Text>
             <Text style={styles.subtitle}>
-              {data?.firstDay ? `数据自 ${data.firstDay} 起 · 基于本地会话日志` : "基于本地会话日志统计"}
+              {data?.firstDay ? t("app.subtitleSince", { day: data.firstDay }) : t("app.subtitle")}
             </Text>
           </View>
           <View style={styles.buttonRow}>
-            <Pressable accessibilityRole="button" accessibilityLabel="打开配置" style={styles.refreshButton} onPress={() => setShowSettings(true)}>
-              <Text style={styles.refreshText}>配置</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={t("app.a11yOpenConfig")} style={styles.refreshButton} onPress={() => setShowSettings(true)}>
+              <Text style={styles.refreshText}>{t("app.config")}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="刷新用量"
+              accessibilityLabel={t("app.a11yRefresh")}
               style={styles.refreshButton}
               onPress={() => {
                 void refresh({}).then(() => query.refetch());
               }}
             >
-              <Text style={styles.refreshText}>{query.isFetching ? "刷新中…" : "刷新"}</Text>
+              <Text style={styles.refreshText}>{query.isFetching ? t("app.refreshing") : t("app.refresh")}</Text>
             </Pressable>
           </View>
         </View>
@@ -217,7 +213,7 @@ export function UsageScreen(props: PluginScreenProps) {
         </ScrollView>
 
         <View style={styles.pillRow}>
-          {RANGES.map((item) => {
+          {ranges.map((item) => {
             const active = item.key === range;
             return (
               <Pressable
@@ -253,14 +249,14 @@ export function UsageScreen(props: PluginScreenProps) {
 
         {activeDevice !== "aggregate" && selectedOrigin ? (
           <Text style={styles.footer}>
-            {selectedOrigin.label} · {originStatusText(selectedOrigin.status, selectedOrigin.lastPullAt)}
+            {selectedOrigin.label} · {originStatusText(t, selectedOrigin.status, selectedOrigin.lastPullAt)}
             {selectedOrigin.lastError ? ` · ${selectedOrigin.lastError}` : ""}
           </Text>
         ) : null}
         {activeDevice === "aggregate"
           ? failedOrigins.map((origin) => (
               <Text key={origin.id} style={styles.footer}>
-                {origin.label} 拉取失败：{origin.lastError}
+                {t("origin.pullFailed", { label: origin.label, error: origin.lastError ?? "" })}
               </Text>
             ))
           : null}
@@ -268,14 +264,14 @@ export function UsageScreen(props: PluginScreenProps) {
         {data?.scanning ? (
           <View style={styles.banner}>
             <Text style={styles.bannerText}>
-              正在扫描本地日志 {data.scanDone}/{Math.max(data.scanTotal, 1)}
-              {data.firstDay ? "" : "（首次扫描，Codex 历史日志较大，可能需要一会儿）"}
+              {t("scan.scanning", { done: data.scanDone, total: Math.max(data.scanTotal, 1) })}
+              {data.firstDay ? "" : t("scan.firstHint")}
             </Text>
           </View>
         ) : null}
         {data?.scanError && !data.scanning ? (
           <View style={styles.banner}>
-            <Text style={styles.bannerText}>上次扫描出错：{data.scanError}</Text>
+            <Text style={styles.bannerText}>{t("scan.error", { error: data.scanError })}</Text>
           </View>
         ) : null}
 
@@ -294,9 +290,9 @@ export function UsageScreen(props: PluginScreenProps) {
 
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>趋势</Text>
+                <Text style={styles.sectionTitle}>{t("section.trend")}</Text>
                 <View style={styles.modeRow}>
-                  {CHART_MODES.map((item) => {
+                  {chartModes.map((item) => {
                     const active = chartMode === item.key;
                     return (
                       <Pressable
@@ -319,11 +315,11 @@ export function UsageScreen(props: PluginScreenProps) {
                   </View>
                 ))}
               </View>
-              <Text style={styles.footer}>悬浮（或点按）图表查看当期明细。</Text>
+              <Text style={styles.footer}>{t("chart.hoverHint")}</Text>
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>按 Agent</Text>
+              <Text style={styles.sectionTitle}>{t("section.byAgent")}</Text>
               {visibleAgents.map((agent) => {
                 const share = Math.max(1, Math.round((agent.totalTokens / maxAgentTokens) * 100));
                 return (
@@ -332,8 +328,8 @@ export function UsageScreen(props: PluginScreenProps) {
                       <View style={[styles.dot, { backgroundColor: AGENT_COLORS[agent.id] ?? FALLBACK_COLOR }]} />
                       <Text style={styles.agentName}>{agent.label}</Text>
                       <Text style={styles.agentNumbers} numberOfLines={1}>
-                        {formatTokens(agent.totalTokens)} tok · {agent.requests} 次
-                        {agent.credits > 0 ? ` · ${formatCredits(agent.credits)} 积分` : ""}
+                        {formatTokens(agent.totalTokens)} tok · {t("unit.requests", { n: agent.requests })}
+                        {agent.credits > 0 ? ` · ${t("unit.credits", { n: formatCredits(agent.credits) })}` : ""}
                       </Text>
                     </View>
                     <View style={styles.barTrack}>
@@ -347,7 +343,7 @@ export function UsageScreen(props: PluginScreenProps) {
 
             {(data?.models ?? []).length > 0 ? (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>模型明细</Text>
+                <Text style={styles.sectionTitle}>{t("section.models")}</Text>
                 {(data?.models ?? [])
                   .slice(0, compact ? 6 : 10)
                   .map((model) => (
@@ -358,7 +354,7 @@ export function UsageScreen(props: PluginScreenProps) {
                       </Text>
                       <Text style={styles.modelValue}>
                         {formatTokens(model.totalTokens)} tok
-                        {model.credits > 0 ? ` · ${formatCredits(model.credits)} 分` : ""}
+                        {model.credits > 0 ? ` · ${t("unit.creditsShort", { n: formatCredits(model.credits) })}` : ""}
                       </Text>
                     </View>
                   ))}
@@ -367,7 +363,7 @@ export function UsageScreen(props: PluginScreenProps) {
 
             {(data?.projects ?? []).length > 0 ? (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>项目明细</Text>
+                <Text style={styles.sectionTitle}>{t("section.projects")}</Text>
                 {(data?.projects ?? [])
                   .slice(0, compact ? 5 : 8)
                   .map((project) => (
@@ -377,7 +373,7 @@ export function UsageScreen(props: PluginScreenProps) {
                       </Text>
                       <Text style={styles.modelValue}>
                         {formatTokens(project.totalTokens)} tok
-                        {project.credits > 0 ? ` · ${formatCredits(project.credits)} 分` : ""}
+                        {project.credits > 0 ? ` · ${t("unit.creditsShort", { n: formatCredits(project.credits) })}` : ""}
                       </Text>
                     </View>
                   ))}
@@ -386,35 +382,35 @@ export function UsageScreen(props: PluginScreenProps) {
 
             <View style={styles.section}>
               <Pressable style={styles.sectionHeader} onPress={() => setShowNotes((value) => !value)}>
-                <Text style={styles.sectionTitle}>统计口径与已知差异</Text>
-                <Text style={styles.notesToggle}>{showNotes ? "收起" : "展开"}</Text>
+                <Text style={styles.sectionTitle}>{t("notes.title")}</Text>
+                <Text style={styles.notesToggle}>{showNotes ? t("notes.collapse") : t("notes.expand")}</Text>
               </Pressable>
               {showNotes ? (
                 <View style={styles.notesList}>
                   <Text style={styles.notesText}>
-                    · 本插件仅统计本地（及远端）会话日志；CC Switch 等代理工具还会记录「代理层」流量，口径天然不同。
+                    {t("notes.item1")}
                   </Text>
                   <Text style={styles.notesText}>
-                    · Codex 少量「一次性 App Server 线程」请求不写入任何本地日志（仅代理可见），本插件无法统计；量级通常小于 0.1%。
+                    {t("notes.item2")}
                   </Text>
                   <Text style={styles.notesText}>
-                    · 请求数：CC Switch 的请求数包含其自身探针、限流与失败请求，通常略高；对比时建议以 token 总量为准。
+                    {t("notes.item3")}
                   </Text>
                   <Text style={styles.notesText}>
-                    · 历史差异：源端清理过的记录（如 Claude Code 约 30 天自动清理）无法补回；本插件也会统计部分 CC Switch 不扫描的内容（Pi forks/子会话、Codex fork 恢复事件），个别数字可能更大。
+                    {t("notes.item4")}
                   </Text>
-                  <Text style={styles.notesText}>以上均为数据源结构差异，不是统计误差。</Text>
+                  <Text style={styles.notesText}>{t("notes.item5")}</Text>
                 </View>
               ) : (
-                <Text style={styles.footer}>与 CC Switch 对比时存在少量口径差异，展开查看原因。</Text>
+                <Text style={styles.footer}>{t("notes.collapsedHint")}</Text>
               )}
             </View>
           </>
         ) : (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{data?.scanning ? "正在准备数据…" : "暂无数据"}</Text>
+            <Text style={styles.sectionTitle}>{data?.scanning ? t("empty.preparing") : t("empty.noData")}</Text>
             <Text style={styles.footer}>
-              {data?.scanning ? "首次扫描完成后，这里会显示统计。" : "未找到本地会话日志，或所选设备范围内没有用量。"}
+              {data?.scanning ? t("empty.firstScan") : t("empty.none")}
             </Text>
           </View>
         )}

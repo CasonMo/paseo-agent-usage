@@ -1,4 +1,5 @@
 import { execCommand, spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
+import { st } from "../i18n";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -82,9 +83,9 @@ async function resolvePassword(host: HostConfig): Promise<{ password: string | n
     try {
       const { stdout } = await execCommand("/bin/sh", ["-c", host.passwordCommand], { timeout: 15000, maxBuffer: 1024 * 1024 });
       const value = stdout.trim();
-      return value ? { password: value, error: null } : { password: null, error: `passwordCommand 没有输出（${host.name}）` };
+      return value ? { password: value, error: null } : { password: null, error: st(`passwordCommand 没有输出（${host.name}）`, `passwordCommand produced no output (${host.name})`) };
     } catch (error) {
-      return { password: null, error: `passwordCommand 执行失败（${host.name}）：${error instanceof Error ? error.message : String(error)}` };
+      return { password: null, error: st(`passwordCommand 执行失败（${host.name}）：${error instanceof Error ? error.message : String(error)}`, `passwordCommand failed (${host.name}): ${error instanceof Error ? error.message : String(error)}`) };
     }
   }
   return { password: null, error: null };
@@ -119,9 +120,9 @@ function remoteCommand(host: HostConfig): string {
 }
 
 function cleanSshError(exitCode: number | null, stderr: string): string {
-  if (/command not found/.test(stderr)) return "远端缺少可用的 JS 运行时（可在主机配置里指定 nodePath）";
-  if (/Permission denied/.test(stderr)) return "SSH 认证失败（检查密码 / 密钥配置）";
-  if (/Host key verification failed/.test(stderr)) return "SSH Host Key 校验失败";
+  if (/command not found/.test(stderr)) return st("远端缺少可用的 JS 运行时（可在主机配置里指定 nodePath）", "Remote has no usable JS runtime (set nodePath in the host config)");
+  if (/Permission denied/.test(stderr)) return st("SSH 认证失败（检查密码 / 密钥配置）", "SSH authentication failed (check password/key settings)");
+  if (/Host key verification failed/.test(stderr)) return st("SSH Host Key 校验失败", "SSH host key verification failed");
   const tail = stderr.trim().split("\n").map((line) => line.trim()).filter(Boolean).slice(-2).join(" | ");
   return tail ? tail.slice(0, 400) : `ssh exited with code ${exitCode}`;
 }
@@ -157,7 +158,7 @@ async function executeSsh(host: HostConfig, pluginDataDir: string, command: stri
     try {
       child = spawnProcess("ssh", args, { stdio: "pipe", env });
     } catch (error) {
-      resolve({ ok: false, error: `无法启动 ssh：${error instanceof Error ? error.message : String(error)}`, stdout: "", stderr: "", exitCode: null });
+      resolve({ ok: false, error: st(`无法启动 ssh：${error instanceof Error ? error.message : String(error)}`, `Failed to start ssh: ${error instanceof Error ? error.message : String(error)}`), stdout: "", stderr: "", exitCode: null });
       return;
     }
     let stdout = "";
@@ -171,7 +172,7 @@ async function executeSsh(host: HostConfig, pluginDataDir: string, command: stri
     };
     const timer = setTimeout(() => {
       void terminateProcess(child).catch(() => {});
-      finish({ ok: false, error: `拉取超时（${Math.round(timeoutMs / 1000)}s）`, stdout: "", stderr: stderr.slice(-400), exitCode: null });
+      finish({ ok: false, error: st(`拉取超时（${Math.round(timeoutMs / 1000)}s）`, `Pull timed out (${Math.round(timeoutMs / 1000)}s)`), stdout: "", stderr: stderr.slice(-400), exitCode: null });
     }, timeoutMs);
     timer.unref?.();
     child.stdout.setEncoding("utf8");
@@ -180,7 +181,7 @@ async function executeSsh(host: HostConfig, pluginDataDir: string, command: stri
       stdout += chunk;
       if (stdout.length > options.maxBytes) {
         void terminateProcess(child).catch(() => {});
-        finish({ ok: false, error: "采集器输出超过大小上限", stdout: "", stderr: stderr.slice(-400), exitCode: null });
+        finish({ ok: false, error: st("采集器输出超过大小上限", "Collector output exceeded the size limit"), stdout: "", stderr: stderr.slice(-400), exitCode: null });
       }
     });
     child.stderr.on("data", (chunk: string) => {
@@ -188,7 +189,7 @@ async function executeSsh(host: HostConfig, pluginDataDir: string, command: stri
       if (stderr.length > MAX_STDERR_BYTES) stderr = stderr.slice(-MAX_STDERR_BYTES);
     });
     child.on("error", (error) => {
-      finish({ ok: false, error: `ssh 进程错误：${error.message}`, stdout: "", stderr: "", exitCode: null });
+      finish({ ok: false, error: st(`ssh 进程错误：${error.message}`, `ssh process error: ${error.message}`), stdout: "", stderr: "", exitCode: null });
     });
     child.on("close", (code) => {
       if (code === 0) {
@@ -230,8 +231,8 @@ export async function testHost(host: HostConfig, pluginDataDir: string): Promise
     `for d in ~/.claude/projects ~/.codex/sessions ~/.pi/agent/sessions; do [ -d "$d" ] && echo "found $d"; done`,
   ].join("\n");
   const result = await executeSsh(host, pluginDataDir, command, { timeoutMs: 25000, maxBytes: 256 * 1024 });
-  if (!result.ok) return { ok: false, detail: result.error ?? "连接失败" };
+  if (!result.ok) return { ok: false, detail: result.error ?? st("连接失败", "Connection failed") };
   const output = `${result.stdout}${result.stderr}`.trim();
   const hasNode = /^v\d+\./m.test(output);
-  return { ok: hasNode, detail: output.slice(0, 1200) || "（无输出）" };
+  return { ok: hasNode, detail: output.slice(0, 1200) || st("（无输出）", "(no output)") };
 }

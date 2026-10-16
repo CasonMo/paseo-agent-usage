@@ -3,6 +3,7 @@ import { Fragment, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { UsageSeriesPoint } from "../shared/usage";
 import { formatCredits, formatTokens } from "./format";
+import { useI18n } from "./i18n";
 
 export type ChartMode = "bar" | "line";
 export type ChartMetric = "tokens" | "credits";
@@ -36,6 +37,7 @@ function orderedEntries(byAgent: Record<string, number>): Array<[string, number]
 }
 
 function Tooltip({ point, theme, metric }: { point: UsageSeriesPoint; theme: Theme; metric: ChartMetric }) {
+  const { t } = useI18n();
   const entries = metric === "tokens" ? orderedEntries(point.byAgent) : [];
   return (
     <View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0, alignItems: "center", zIndex: 10 }}>
@@ -53,10 +55,10 @@ function Tooltip({ point, theme, metric }: { point: UsageSeriesPoint; theme: The
       >
         <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{point.label}</Text>
         {metric === "credits" ? (
-          <Text style={{ fontSize: 12, fontWeight: "700", color: theme.colors.foreground }}>{formatCredits(point.credits)} 积分</Text>
+          <Text style={{ fontSize: 12, fontWeight: "700", color: theme.colors.foreground }}>{t("unit.credits", { n: formatCredits(point.credits) })}</Text>
         ) : (
           <Text style={{ fontSize: 12, fontWeight: "700", color: theme.colors.foreground }}>
-            {formatTokens(point.totalTokens)} tok{point.credits > 0 ? ` · ${formatCredits(point.credits)} 积分` : ""}
+            {formatTokens(point.totalTokens)} tok{point.credits > 0 ? ` · ${t("unit.credits", { n: formatCredits(point.credits) })}` : ""}
           </Text>
         )}
         {entries.map(([agent, value]) => (
@@ -256,6 +258,7 @@ export function TrendChart({
   metric?: ChartMetric;
   singleAgent?: string | null;
 }) {
+  const { t } = useI18n();
   const [active, setActive] = useState<number | null>(null);
   const [width, setWidth] = useState(0);
   const points = compact && series.length > 12 ? series.slice(-12) : series;
@@ -278,7 +281,7 @@ export function TrendChart({
         )}
         <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, flexDirection: "row", gap: 3 }}>
           {points.map((point, index) => (
-            <Pressable key={point.key} style={{ flex: 1 }} accessibilityLabel={`${point.label} 用量`} {...hoverProps(index)} />
+            <Pressable key={point.key} style={{ flex: 1 }} accessibilityLabel={t("chart.pointA11y", { label: point.label })} {...hoverProps(index)} />
           ))}
         </View>
         {activeIndex !== null ? <Tooltip point={points[activeIndex] as UsageSeriesPoint} theme={theme} metric={metric} /> : null}

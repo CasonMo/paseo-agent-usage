@@ -56,6 +56,7 @@ export function UsageScreen(props: PluginScreenProps) {
   const [chartMode, setChartMode] = useState<ChartMode>("bar");
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
+  const [showNotes, setShowNotes] = useState(true);
   const deviceOrigin = device === "aggregate" ? undefined : device;
   const customPayload = useMemo(() => {
     if (range !== "custom" || !customFrom || !customTo) return undefined;
@@ -112,6 +113,9 @@ export function UsageScreen(props: PluginScreenProps) {
         legendItem: { flexDirection: "row", alignItems: "center", gap: 4 },
         legendText: { fontSize: 10, color: theme.colors.foregroundMuted },
         footer: { fontSize: 10, color: theme.colors.foregroundMuted },
+        notesToggle: { fontSize: 11, color: theme.colors.foregroundMuted },
+        notesList: { gap: 6 },
+        notesText: { fontSize: 11, color: theme.colors.foregroundMuted, lineHeight: 16 },
       }) satisfies Record<string, ViewStyle | TextStyle>,
     [theme, compact],
   );
@@ -379,6 +383,32 @@ export function UsageScreen(props: PluginScreenProps) {
                   ))}
               </View>
             ) : null}
+
+            <View style={styles.section}>
+              <Pressable style={styles.sectionHeader} onPress={() => setShowNotes((value) => !value)}>
+                <Text style={styles.sectionTitle}>统计口径与已知差异</Text>
+                <Text style={styles.notesToggle}>{showNotes ? "收起" : "展开"}</Text>
+              </Pressable>
+              {showNotes ? (
+                <View style={styles.notesList}>
+                  <Text style={styles.notesText}>
+                    · 本插件仅统计本地（及远端）会话日志；CC Switch 等代理工具还会记录「代理层」流量，口径天然不同。
+                  </Text>
+                  <Text style={styles.notesText}>
+                    · Codex 少量「一次性 App Server 线程」请求不写入任何本地日志（仅代理可见），本插件无法统计；量级通常小于 0.1%。
+                  </Text>
+                  <Text style={styles.notesText}>
+                    · 请求数：CC Switch 的请求数包含其自身探针、限流与失败请求，通常略高；对比时建议以 token 总量为准。
+                  </Text>
+                  <Text style={styles.notesText}>
+                    · 历史差异：源端清理过的记录（如 Claude Code 约 30 天自动清理）无法补回；本插件也会统计部分 CC Switch 不扫描的内容（Pi forks/子会话、Codex fork 恢复事件），个别数字可能更大。
+                  </Text>
+                  <Text style={styles.notesText}>以上均为数据源结构差异，不是统计误差。</Text>
+                </View>
+              ) : (
+                <Text style={styles.footer}>与 CC Switch 对比时存在少量口径差异，展开查看原因。</Text>
+              )}
+            </View>
           </>
         ) : (
           <View style={styles.section}>

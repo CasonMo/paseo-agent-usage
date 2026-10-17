@@ -45,10 +45,11 @@ async function main(): Promise<void> {
   state.meta.scanError = null;
   await saveState(cacheDir, state);
   const projection = {
-    v: 1,
+    v: 2,
     generatedAt: Date.now(),
     node: process.version,
     buckets: state.buckets,
+    sessions: state.sessions,
     recent: state.recent,
   };
   process.stdout.write(JSON.stringify(projection));

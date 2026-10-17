@@ -6,7 +6,7 @@ import { setServerLocale, st } from "./i18n";
 import { applyHostForms, readHostsFile, writeHostsFile } from "./remote/hosts-file";
 import { pullHost, testHost, type HostConfig } from "./remote/ssh";
 import { scanAll } from "./scan/scanner";
-import { emptyState, loadState, pluginDataDir, saveState, type CallRecord, type UsageBucket, type RemoteHostState, type ScanState } from "./scan/state";
+import { emptyState, loadState, pluginDataDir, saveState, type CallRecord, type UsageBucket, type RemoteHostState, type ScanState, type SessionEntry } from "./scan/state";
 import { num } from "./scan/util";
 
 export interface UsageService {
@@ -28,6 +28,7 @@ interface Projection {
   generatedAt?: unknown;
   node?: unknown;
   buckets?: unknown;
+  sessions?: unknown;
   recent?: unknown;
 }
 
@@ -112,6 +113,29 @@ function sanitizeRecent(raw: unknown): Record<string, CallRecord[]> {
     recent[harness] = records;
   }
   return recent;
+}
+
+function sanitizeSessions(raw: unknown): Record<string, SessionEntry> {
+  const sessions: Record<string, SessionEntry> = {};
+  if (!raw || typeof raw !== "object") return sessions;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const record = value as Record<string, unknown>;
+    sessions[key] = {
+      s: num(record.s),
+      e: num(record.e),
+      r: num(record.r),
+      i: num(record.i),
+      o: num(record.o),
+      cr: num(record.cr),
+      cw: num(record.cw),
+      rz: num(record.rz),
+      cost: num(record.cost),
+      credits: num(record.credits),
+      p: typeof record.p === "string" ? record.p : "",
+    };
+  }
+  return sessions;
 }
 
 function parseProjection(text: string): Projection | null {
@@ -288,6 +312,7 @@ export function createUsageService(): UsageService {
           target: host.target,
           buckets: {},
           recent: {},
+          sessions: {},
           lastPullAt: null,
           lastAttemptAt: null,
           lastError: null,
@@ -304,6 +329,7 @@ export function createUsageService(): UsageService {
               target: host.target,
               buckets: sanitizeBuckets(projection.buckets),
               recent: sanitizeRecent(projection.recent),
+              sessions: sanitizeSessions(projection.sessions),
               lastPullAt: Date.now(),
               lastAttemptAt: Date.now(),
               lastError: null,
@@ -432,6 +458,7 @@ export function createUsageService(): UsageService {
             target: host.target,
             buckets: {},
             recent: {},
+            sessions: {},
             lastPullAt: null,
             lastAttemptAt: null,
             lastError: null,

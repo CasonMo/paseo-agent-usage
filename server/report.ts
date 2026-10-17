@@ -1,5 +1,5 @@
-import type { UsageAgentReport, UsageGranularity, UsageRangeKey, UsageReport } from "../shared/usage";
-import type { CallRecord, UsageBucket, ScanState } from "./scan/state";
+import type { UsageAgentReport, UsageGranularity, UsageRangeKey, UsageReport, UsageSessionItem } from "../shared/usage";
+import type { CallRecord, SessionEntry, UsageBucket, ScanState } from "./scan/state";
 import { localHourKey } from "./scan/util";
 
 const HARNESS_ORDER = ["claude", "codex", "opencode", "pi"];
@@ -14,6 +14,7 @@ const MAX_PROJECTS = 60;
 const MAX_AGENT_MODELS = 30;
 const MAX_AGENT_PROJECTS = 30;
 const MAX_AGENT_REQUESTS = 120;
+const MAX_SESSIONS = 200;
 
 export interface HostView {
   name: string;
@@ -66,6 +67,20 @@ function collectSources(state: ScanState): Source[] {
   const sources: Source[] = [{ id: "local", buckets: state.buckets }];
   for (const [name, host] of Object.entries(state.hosts)) {
     sources.push({ id: name, buckets: host.buckets ?? {} });
+  }
+  return sources;
+}
+
+interface SessionSource {
+  id: string;
+  sessions: Record<string, SessionEntry>;
+}
+
+function collectSessionSources(state: ScanState): SessionSource[] {
+  const sources: SessionSource[] = [{ id: "local", sessions: state.sessions }];
+  for (const [name, host] of Object.entries(state.hosts)) {
+    if (!host?.sessions) continue;
+    sources.push({ id: name, sessions: host.sessions });
   }
   return sources;
 }
@@ -485,6 +500,11 @@ export function buildAgentReport(state: ScanState, agent: string, range: UsageRa
   }
   requests.sort((a, b) => b.ts - a.ts);
 
+  const win = rangeWindow(range, now, custom);
+  const sessions = agentEnabled
+    ? collectAgentSessions(state, agent, win.start.getTime(), win.end.getTime(), originFilter)
+    : { count: 0, items: [] as UsageSessionItem[] };
+
   return {
     agent,
     label: HARNESS_LABELS[agent] ?? agent,
@@ -531,5 +551,47 @@ export function buildAgentReport(state: ScanState, agent: string, range: UsageRa
         credits: round2(aggregate.credits),
       })),
     requests: requests.slice(0, MAX_AGENT_REQUESTS),
+    sessionCount: sessions.count,
+    sessions: sessions.items,
   };
+}
+
+/**
+ * Session rows for ONE agent: a session belongs to the range where it
+ * STARTS and each row shows the session's whole consumption. `count` covers
+ * every matching session; `items` is the newest slice taken after sorting.
+ */
+function collectAgentSessions(state: ScanState, agent: string, startMs: number, endMs: number, originFilter: string | null): { count: number; items: UsageSessionItem[] } {
+  const matched: UsageSessionItem[] = [];
+  let count = 0;
+  for (const source of collectSessionSources(state)) {
+    if (originFilter !== null && source.id !== originFilter) continue;
+    for (const [key, entry] of Object.entries(source.sessions)) {
+      if (!entry || entry.s <= 0) continue;
+      const separator = key.indexOf("\u0001");
+      if (separator < 0 || key.slice(0, separator) !== agent) continue;
+      const sid = key.slice(separator + 1);
+      if (!sid) continue;
+      if (entry.s < startMs || entry.s > endMs) continue;
+      count += 1;
+      matched.push({
+        id: sid,
+        title: typeof entry.title === "string" ? entry.title : "",
+        agent,
+        project: entry.p,
+        start: round0(entry.s),
+        end: round0(entry.e),
+        requests: round0(entry.r),
+        input: round0(entry.i),
+        output: round0(entry.o),
+        cacheRead: round0(entry.cr),
+        cacheWrite: round0(entry.cw),
+        totalTokens: round0(entry.i + entry.o + entry.cr + entry.cw),
+        reportedCostUsd: round2(entry.cost),
+        credits: round2(entry.credits),
+      });
+    }
+  }
+  matched.sort((a, b) => b.start - a.start);
+  return { count, items: matched.slice(0, MAX_SESSIONS) };
 }

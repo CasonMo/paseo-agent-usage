@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { addBucket, recordCall, type ScanState } from "./state";
-import { localHourKey, num } from "./util";
+import { addBucket, applySession, recordCall, type ScanState } from "./state";
+import { clipTitle, localHourKey, num } from "./util";
 
 export const OPENCODE = "opencode";
 
@@ -72,6 +72,15 @@ export async function scanOpencode(state: ScanState): Promise<void> {
       db.exec("PRAGMA query_only = ON;");
     }
     let watermark = state.opencode.watermark;
+    const sessionTitles = new Map<string, string>();
+    try {
+      const titleStatement = db.prepare("SELECT id, title FROM session WHERE title IS NOT NULL AND title <> ''");
+      for (const row of titleStatement.all() as unknown as Array<Record<string, unknown>>) {
+        if (typeof row.id === "string" && typeof row.title === "string") sessionTitles.set(row.id, clipTitle(row.title));
+      }
+    } catch {
+      /* older schema without the title column */
+    }
     const statement = db.prepare(
       "SELECT id, session_id, time_created, time_updated, data FROM message WHERE time_updated > ? ORDER BY time_updated ASC LIMIT 4000",
     );
@@ -104,6 +113,7 @@ export async function scanOpencode(state: ScanState): Promise<void> {
         // so fold them into `o` (matches CC Switch and real spend). `rz` keeps
         // the reasoning share for display only.
         const outputWithReasoning = output + reasoning;
+        const sid = typeof row.session_id === "string" ? row.session_id : "";
         addBucket(state.buckets, localHourKey(ts), OPENCODE, model, project, {
           r: 1,
           i: input,
@@ -113,11 +123,23 @@ export async function scanOpencode(state: ScanState): Promise<void> {
           rz: reasoning,
           cost,
         });
+        applySession(state.sessions, OPENCODE, sid, {
+          t: ts,
+          r: 1,
+          p: project,
+          i: input,
+          o: outputWithReasoning,
+          cr: cacheRead,
+          cw: cacheWrite,
+          rz: reasoning,
+          cost,
+          title: sessionTitles.get(sid),
+        });
         recordCall(state, OPENCODE, {
           t: ts,
           m: model,
           p: project,
-          s: typeof row.session_id === "string" ? row.session_id : "",
+          s: sid,
           i: input,
           o: outputWithReasoning,
           cr: cacheRead,

@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { addBucket, recordCall, type CodexForkState, type FileState, type ScanState } from "./state";
-import { forEachNewLine, localHourKey, num } from "./util";
+import { addBucket, applySession, recordCall, type CodexForkState, type FileState, type ScanState } from "./state";
+import { clipTitle, firstMessageText, forEachNewLine, localHourKey, num, MACHINE_LABEL } from "./util";
 
 export const CODEX = "codex";
 
@@ -26,9 +26,30 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
   let project = previousState?.project ?? "";
   let model = previousState?.model ?? "";
   let session = previousState?.session ?? "";
+  let title = previousState?.sessionTitle ?? "";
   let totals: number[] | null = previousState?.totals ?? null;
   let fork: CodexForkState = previousState?.codexFork ?? { forked: false, point: null, baselineDone: false, firstTs: null };
   const result = await forEachNewLine(path, previousState?.offset ?? 0, (line) => {
+    if (!title && (line.includes('"response_item"') || line.includes('"user_message"'))) {
+      try {
+        const entry = JSON.parse(line) as { payload?: { type?: unknown; role?: unknown; message?: unknown; content?: unknown } };
+        const payload = entry?.payload;
+        if (payload?.type === "user_message") {
+          const text = clipTitle(payload.message);
+          if (text) title = text;
+        } else if (payload?.type === "message" && payload.role === "user") {
+          // Newer rollouts carry the user's turn as a response_item message;
+          // injected instructions/context blocks use other roles or prefixes.
+          const text = firstMessageText(payload.content);
+          if (text && !MACHINE_LABEL.test(text)) {
+            const label = clipTitle(text);
+            if (label) title = label;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     if (line.includes('"session_meta"')) {
       try {
         const entry = JSON.parse(line) as {
@@ -110,6 +131,17 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
               cw: num(last.cache_write_input_tokens),
               rz: num(last.reasoning_output_tokens),
             });
+            applySession(state.sessions, CODEX, session, {
+              t: ts,
+              r: 1,
+              p: project,
+              title: title || undefined,
+              i: input,
+              o: lOutput,
+              cr: lCached,
+              cw: num(last.cache_write_input_tokens),
+              rz: num(last.reasoning_output_tokens),
+            });
             recordCall(state, CODEX, {
               t: ts,
               m: model || "codex",
@@ -163,6 +195,17 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
       cw: dCacheWrite,
       rz: dReasoning,
     });
+    applySession(state.sessions, CODEX, session, {
+      t: ts,
+      r: 1,
+      p: project,
+      title: title || undefined,
+      i: input,
+      o: dOutput,
+      cr: dCached,
+      cw: dCacheWrite,
+      rz: dReasoning,
+    });
     recordCall(state, CODEX, {
       t: ts,
       m: model || "codex",
@@ -179,6 +222,7 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
   });
   if (!result) return;
   const fileState: FileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, model, session };
+  if (title) fileState.sessionTitle = title;
   if (totals) fileState.totals = totals;
   if (fork.forked) fileState.codexFork = fork;
   state.files[path] = fileState;

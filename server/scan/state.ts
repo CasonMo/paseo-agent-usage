@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
-export const STATE_VERSION = 10;
+export const STATE_VERSION = 12;
 
 /** Usage aggregate for one hour bucket. Bucket keys start with an hour key `YYYY-MM-DDTHH`. */
 export interface UsageBucket {
@@ -52,6 +52,83 @@ export interface CodexForkState {
   firstTs: number | null;
 }
 
+/** Per-session aggregate, keyed `harness \u0001 sessionId` in `ScanState.sessions`.
+ *  `s`/`e` are the first/last counted call timestamps; fields mirror UsageBucket.
+ *  `title` is a short human label (first user message or summary), first win. */
+export interface SessionEntry {
+  s: number;
+  e: number;
+  r: number;
+  i: number;
+  o: number;
+  cr: number;
+  cw: number;
+  rz: number;
+  cost: number;
+  credits: number;
+  p: string;
+  title?: string;
+}
+
+/** Keeps the sessions index bounded (≈1MB): counted requests drop dead entries,
+ *  and once the cap is hit the oldest sessions are evicted first. */
+const SESSION_KEEP_LIMIT = 8000;
+
+export function pruneSessions(sessions: Record<string, SessionEntry>): void {
+  for (const key of Object.keys(sessions)) {
+    const entry = sessions[key];
+    if (!entry || entry.r <= 0) delete sessions[key];
+  }
+  const keys = Object.keys(sessions);
+  if (keys.length <= SESSION_KEEP_LIMIT) return;
+  keys.sort((a, b) => (sessions[b]?.e ?? 0) - (sessions[a]?.e ?? 0));
+  for (const key of keys.slice(SESSION_KEEP_LIMIT)) delete sessions[key];
+}
+
+export interface SessionDelta {
+  /** Counted call timestamp; establishes the session start/end. Revokes omit it. */
+  t?: number;
+  /** Request count delta: +1 per counted call, negative revokes mirror bucket deltas. */
+  r: number;
+  i?: number;
+  o?: number;
+  cr?: number;
+  cw?: number;
+  rz?: number;
+  cost?: number;
+  credits?: number;
+  p?: string;
+  /** Human label; only the first non-empty value wins so later calls keep it. */
+  title?: string;
+}
+
+/** Applies one normalized call to a session's aggregate. Unknown sessions only
+ *  materialize for positive deltas, so revoke passes cannot resurrect entries. */
+export function applySession(sessions: Record<string, SessionEntry>, harness: string, sid: string, delta: SessionDelta): void {
+  if (!sid) return;
+  const key = `${harness}\u0001${sid}`;
+  let entry = sessions[key];
+  if (!entry) {
+    if (delta.r <= 0) return;
+    entry = { s: delta.t ?? 0, e: delta.t ?? 0, r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0, p: delta.p ?? "" };
+    sessions[key] = entry;
+  }
+  entry.r += delta.r;
+  entry.i += delta.i ?? 0;
+  entry.o += delta.o ?? 0;
+  entry.cr += delta.cr ?? 0;
+  entry.cw += delta.cw ?? 0;
+  entry.rz += delta.rz ?? 0;
+  entry.cost += delta.cost ?? 0;
+  entry.credits += delta.credits ?? 0;
+  if (delta.p) entry.p = delta.p;
+  if (delta.title && !entry.title) entry.title = delta.title;
+  if (typeof delta.t === "number" && Number.isFinite(delta.t)) {
+    if (delta.t < entry.s) entry.s = delta.t;
+    if (delta.t > entry.e) entry.e = delta.t;
+  }
+}
+
 export interface FileState {
   offset: number;
   size: number;
@@ -59,6 +136,8 @@ export interface FileState {
   project?: string;
   model?: string;
   session?: string;
+  /** First user message captured for the session label (claude/codex/pi). */
+  sessionTitle?: string;
   /** Codex fork bookkeeping: a forked rollout's baseline/replay part is not usage. */
   codexFork?: CodexForkState;
   /** Last seen Codex cumulative totals: [input, cached, cacheWrite, output, reasoning, total]. */
@@ -70,6 +149,7 @@ export interface RemoteHostState {
   target: string;
   buckets: Record<string, UsageBucket>;
   recent: Record<string, CallRecord[]>;
+  sessions: Record<string, SessionEntry>;
   lastPullAt: number | null;
   lastAttemptAt: number | null;
   lastError: string | null;
@@ -80,6 +160,8 @@ export interface RemoteHostState {
 export interface ScanState {
   version: typeof STATE_VERSION;
   buckets: Record<string, UsageBucket>;
+  /** Per-session aggregates for locally scanned logs, keyed `harness \u0001 sessionId`. */
+  sessions: Record<string, SessionEntry>;
   files: Record<string, FileState>;
   recent: Record<string, CallRecord[]>;
   opencode: { watermark: number };
@@ -100,6 +182,7 @@ export function emptyState(): ScanState {
   return {
     version: STATE_VERSION,
     buckets: {},
+    sessions: {},
     files: {},
     recent: {},
     opencode: { watermark: 0 },
@@ -194,6 +277,8 @@ export async function loadState(dir: string): Promise<ScanState> {
     if (!parsed || typeof parsed !== "object" || parsed.version !== STATE_VERSION) return emptyState();
     const state = emptyState();
     state.buckets = (parsed.buckets as ScanState["buckets"]) ?? {};
+    state.sessions =
+      parsed.sessions && typeof parsed.sessions === "object" ? (parsed.sessions as ScanState["sessions"]) : {};
     state.files = (parsed.files as ScanState["files"]) ?? {};
     state.recent = (parsed.recent as ScanState["recent"]) ?? {};
     state.opencode = { watermark: typeof parsed.opencode?.watermark === "number" ? parsed.opencode.watermark : 0 };
@@ -210,6 +295,8 @@ export async function loadState(dir: string): Promise<ScanState> {
 }
 
 export async function saveState(dir: string, state: ScanState): Promise<void> {
+  pruneSessions(state.sessions);
+  for (const host of Object.values(state.hosts ?? {})) if (host?.sessions) pruneSessions(host.sessions);
   await mkdir(dir, { recursive: true, mode: 0o700 }).catch(() => {});
   const file = join(dir, "state.json");
   const temporary = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;

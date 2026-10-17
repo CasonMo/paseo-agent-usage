@@ -11,12 +11,50 @@ var import_node_path3 = require("path");
 // server/scan/state.ts
 var import_promises = require("fs/promises");
 var import_node_path = require("path");
-var STATE_VERSION = 10;
+var STATE_VERSION = 11;
+var SESSION_KEEP_LIMIT = 8e3;
+function pruneSessions(sessions) {
+  for (const key of Object.keys(sessions)) {
+    const entry = sessions[key];
+    if (!entry || entry.r <= 0) delete sessions[key];
+  }
+  const keys = Object.keys(sessions);
+  if (keys.length <= SESSION_KEEP_LIMIT) return;
+  keys.sort((a, b) => {
+    var _a, _b;
+    return (((_a = sessions[b]) == null ? void 0 : _a.e) ?? 0) - (((_b = sessions[a]) == null ? void 0 : _b.e) ?? 0);
+  });
+  for (const key of keys.slice(SESSION_KEEP_LIMIT)) delete sessions[key];
+}
+function applySession(sessions, harness, sid, delta) {
+  if (!sid) return;
+  const key = `${harness}${sid}`;
+  let entry = sessions[key];
+  if (!entry) {
+    if (delta.r <= 0) return;
+    entry = { s: delta.t ?? 0, e: delta.t ?? 0, r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0, p: delta.p ?? "" };
+    sessions[key] = entry;
+  }
+  entry.r += delta.r;
+  entry.i += delta.i ?? 0;
+  entry.o += delta.o ?? 0;
+  entry.cr += delta.cr ?? 0;
+  entry.cw += delta.cw ?? 0;
+  entry.rz += delta.rz ?? 0;
+  entry.cost += delta.cost ?? 0;
+  entry.credits += delta.credits ?? 0;
+  if (delta.p) entry.p = delta.p;
+  if (typeof delta.t === "number" && Number.isFinite(delta.t)) {
+    if (delta.t < entry.s) entry.s = delta.t;
+    if (delta.t > entry.e) entry.e = delta.t;
+  }
+}
 var MAX_RECENT_PER_AGENT = 400;
 function emptyState() {
   return {
     version: STATE_VERSION,
     buckets: {},
+    sessions: {},
     files: {},
     recent: {},
     opencode: { watermark: 0 },
@@ -74,6 +112,7 @@ async function loadState(dir) {
     if (!parsed || typeof parsed !== "object" || parsed.version !== STATE_VERSION) return emptyState();
     const state = emptyState();
     state.buckets = parsed.buckets ?? {};
+    state.sessions = parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {};
     state.files = parsed.files ?? {};
     state.recent = parsed.recent ?? {};
     state.opencode = { watermark: typeof ((_a = parsed.opencode) == null ? void 0 : _a.watermark) === "number" ? parsed.opencode.watermark : 0 };
@@ -89,6 +128,8 @@ async function loadState(dir) {
   }
 }
 async function saveState(dir, state) {
+  pruneSessions(state.sessions);
+  for (const host of Object.values(state.hosts ?? {})) if (host == null ? void 0 : host.sessions) pruneSessions(host.sessions);
   await (0, import_promises.mkdir)(dir, { recursive: true, mode: 448 }).catch(() => {
   });
   const file = (0, import_node_path.join)(dir, "state.json");
@@ -197,6 +238,7 @@ async function scanClaudeFile(state, path) {
     const ts = Date.parse(entry.timestamp);
     if (!Number.isFinite(ts)) return;
     const id = typeof message.id === "string" && message.id ? message.id : null;
+    const sid = typeof entry.sessionId === "string" ? entry.sessionId : "";
     const contribution = {
       id: id ?? "",
       d: localHourKey(ts),
@@ -211,6 +253,14 @@ async function scanClaudeFile(state, path) {
     if (id && recent.has(id)) {
       const before = recent.get(id);
       addBucket(state.buckets, before.d, CLAUDE, before.m, before.p, {
+        r: -1,
+        i: -before.i,
+        o: -before.o,
+        cr: -before.cr,
+        cw: -before.cw,
+        rz: -before.rz
+      });
+      applySession(state.sessions, CLAUDE, sid, {
         r: -1,
         i: -before.i,
         o: -before.o,
@@ -234,6 +284,16 @@ async function scanClaudeFile(state, path) {
       cw: contribution.cw,
       rz: contribution.rz
     });
+    applySession(state.sessions, CLAUDE, sid, {
+      t: ts,
+      r: 1,
+      p: contribution.p,
+      i: contribution.i,
+      o: contribution.o,
+      cr: contribution.cr,
+      cw: contribution.cw,
+      rz: contribution.rz
+    });
     recordCall(
       state,
       CLAUDE,
@@ -241,7 +301,7 @@ async function scanClaudeFile(state, path) {
         t: ts,
         m: contribution.m,
         p: contribution.p,
-        s: typeof entry.sessionId === "string" ? entry.sessionId : "",
+        s: sid,
         i: contribution.i,
         o: contribution.o,
         cr: contribution.cr,
@@ -349,6 +409,16 @@ async function scanCodexFile(state, path) {
               cw: num(last.cache_write_input_tokens),
               rz: num(last.reasoning_output_tokens)
             });
+            applySession(state.sessions, CODEX, session, {
+              t: ts,
+              r: 1,
+              p: project,
+              i: input2,
+              o: lOutput,
+              cr: lCached,
+              cw: num(last.cache_write_input_tokens),
+              rz: num(last.reasoning_output_tokens)
+            });
             recordCall(state, CODEX, {
               t: ts,
               m: model || "codex",
@@ -393,6 +463,16 @@ async function scanCodexFile(state, path) {
     const input = Math.max(0, dInput - dCached);
     addBucket(state.buckets, localHourKey(ts), CODEX, model || "codex", project, {
       r: 1,
+      i: input,
+      o: dOutput,
+      cr: dCached,
+      cw: dCacheWrite,
+      rz: dReasoning
+    });
+    applySession(state.sessions, CODEX, session, {
+      t: ts,
+      r: 1,
+      p: project,
       i: input,
       o: dOutput,
       cr: dCached,
@@ -498,6 +578,17 @@ async function scanOpencode(state) {
           rz: reasoning,
           cost
         });
+        applySession(state.sessions, OPENCODE, typeof row.session_id === "string" ? row.session_id : "", {
+          t: ts,
+          r: 1,
+          p: project,
+          i: input,
+          o: outputWithReasoning,
+          cr: cacheRead,
+          cw: cacheWrite,
+          rz: reasoning,
+          cost
+        });
         recordCall(state, OPENCODE, {
           t: ts,
           m: model,
@@ -576,13 +667,29 @@ async function scanPiFile(state, path) {
     }
     const cost = typeof ((_a = usage.cost) == null ? void 0 : _a.total) === "number" && usage.cost.total > 0 ? usage.cost.total : 0;
     const model = typeof message.model === "string" && message.model ? message.model : "unknown";
+    const input = num(usage.input);
+    const output = num(usage.output);
+    const cacheRead = num(usage.cacheRead);
+    const cacheWrite = num(usage.cacheWrite);
+    const reasoning = num(usage.reasoning);
     addBucket(state.buckets, localHourKey(ts), PI, model, project, {
       r: 1,
-      i: num(usage.input),
-      o: num(usage.output),
-      cr: num(usage.cacheRead),
-      cw: num(usage.cacheWrite),
-      rz: num(usage.reasoning),
+      i: input,
+      o: output,
+      cr: cacheRead,
+      cw: cacheWrite,
+      rz: reasoning,
+      cost
+    });
+    applySession(state.sessions, PI, session, {
+      t: ts,
+      r: 1,
+      p: project,
+      i: input,
+      o: output,
+      cr: cacheRead,
+      cw: cacheWrite,
+      rz: reasoning,
       cost
     });
     recordCall(state, PI, {
@@ -590,11 +697,11 @@ async function scanPiFile(state, path) {
       m: model,
       p: project,
       s: session,
-      i: num(usage.input),
-      o: num(usage.output),
-      cr: num(usage.cacheRead),
-      cw: num(usage.cacheWrite),
-      rz: num(usage.reasoning),
+      i: input,
+      o: output,
+      cr: cacheRead,
+      cw: cacheWrite,
+      rz: reasoning,
       cost,
       credits: 0
     });
@@ -693,10 +800,11 @@ async function main() {
   state.meta.scanError = null;
   await saveState(cacheDir, state);
   const projection = {
-    v: 1,
+    v: 2,
     generatedAt: Date.now(),
     node: process.version,
     buckets: state.buckets,
+    sessions: state.sessions,
     recent: state.recent
   };
   process.stdout.write(JSON.stringify(projection));

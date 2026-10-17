@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { addBucket, recordCall, type ScanState } from "./state";
-import { forEachNewLine, localHourKey, num } from "./util";
+import { addBucket, applySession, recordCall, type ScanState } from "./state";
+import { clipTitle, firstMessageText, forEachNewLine, localHourKey, MACHINE_LABEL, num } from "./util";
 
 export const PI = "pi";
 
@@ -27,11 +27,22 @@ export function piRoots(env: NodeJS.ProcessEnv = process.env): string[] {
 export async function scanPiFile(state: ScanState, path: string): Promise<void> {
   const previousState = state.files[path];
   let project = previousState?.project ?? "";
+  let title = previousState?.sessionTitle ?? "";
   const base = path.split("/").pop() ?? "";
   const underscore = base.lastIndexOf("_");
   const session = (underscore >= 0 ? base.slice(underscore + 1) : base).replace(/\.jsonl$/, "");
   const seen = new Set(state.pi.seen);
   const result = await forEachNewLine(path, previousState?.offset ?? 0, (line) => {
+    if (line.includes('"role":"user"')) {
+      try {
+        const entry = JSON.parse(line);
+        const raw = entry?.type === "message" && entry.message?.role === "user" ? firstMessageText(entry.message.content) : "";
+        const text = raw && !MACHINE_LABEL.test(raw.trim()) ? clipTitle(raw) : "";
+        if (text && !title) title = text;
+      } catch {
+        /* fall through: not a parseable user message */
+      }
+    }
     if (!project && line.includes('"type":"session"')) {
       try {
         const entry = JSON.parse(line) as { cwd?: unknown };
@@ -68,13 +79,30 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
     }
     const cost = typeof usage.cost?.total === "number" && usage.cost.total > 0 ? usage.cost.total : 0;
     const model = typeof message.model === "string" && message.model ? message.model : "unknown";
+    const input = num(usage.input);
+    const output = num(usage.output);
+    const cacheRead = num(usage.cacheRead);
+    const cacheWrite = num(usage.cacheWrite);
+    const reasoning = num(usage.reasoning);
     addBucket(state.buckets, localHourKey(ts), PI, model, project, {
       r: 1,
-      i: num(usage.input),
-      o: num(usage.output),
-      cr: num(usage.cacheRead),
-      cw: num(usage.cacheWrite),
-      rz: num(usage.reasoning),
+      i: input,
+      o: output,
+      cr: cacheRead,
+      cw: cacheWrite,
+      rz: reasoning,
+      cost,
+    });
+    applySession(state.sessions, PI, session, {
+      t: ts,
+      r: 1,
+      p: project,
+      title: title || undefined,
+      i: input,
+      o: output,
+      cr: cacheRead,
+      cw: cacheWrite,
+      rz: reasoning,
       cost,
     });
     recordCall(state, PI, {
@@ -82,11 +110,11 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
       m: model,
       p: project,
       s: session,
-      i: num(usage.input),
-      o: num(usage.output),
-      cr: num(usage.cacheRead),
-      cw: num(usage.cacheWrite),
-      rz: num(usage.reasoning),
+      i: input,
+      o: output,
+      cr: cacheRead,
+      cw: cacheWrite,
+      rz: reasoning,
       cost,
       credits: 0,
     });
@@ -95,5 +123,5 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
   if (state.pi.seen.length > PI_SEEN_LIMIT) {
     state.pi.seen = state.pi.seen.slice(-PI_SEEN_LIMIT);
   }
-  state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project };
+  state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, sessionTitle: title || undefined };
 }

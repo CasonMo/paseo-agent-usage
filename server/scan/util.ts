@@ -5,6 +5,32 @@ export function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+/** First user message as the session label: collapsed whitespace, capped length. */
+export function clipTitle(text: unknown): string {
+  if (typeof text !== "string") return "";
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  const chars = [...clean];
+  return chars.length > 60 ? `${chars.slice(0, 60).join("")}…` : clean;
+}
+
+/** Rollout/system-injected text that must never become the session label. */
+export const MACHINE_LABEL = /^(# AGENTS\.md|<environment_context|<user_instructions|<permissions|<chat-history-summary|<paseo-system|<paseo-agent|this session is being continued|caveat: the messages below)/i;
+
+/** Pulls the first text out of a message `content` (string or block array).
+ *  Covers both `type:"text"` (claude/pi) and `type:"input_text"` (codex). */
+export function firstMessageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  for (const block of content) {
+    if (block && typeof block === "object" && typeof (block as { text?: unknown }).text === "string") {
+      const kind = (block as { type?: unknown }).type;
+      if (kind === "text" || kind === "input_text") return (block as { text: string }).text;
+    }
+  }
+  return "";
+}
+
 export function localDateKey(ms: number): string {
   const date = new Date(ms);
   const month = String(date.getMonth() + 1).padStart(2, "0");

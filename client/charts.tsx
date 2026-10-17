@@ -1,12 +1,15 @@
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { Fragment, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import type { UsageSeriesPoint } from "../shared/usage";
+import type { UsageGranularity, UsageSeriesPoint } from "../shared/usage";
 import { formatCredits, formatTokens } from "./format";
 import { useI18n } from "./i18n";
 
 export type ChartMode = "bar" | "line";
 export type ChartMetric = "tokens" | "credits";
+
+export const GRANULARITY_KEYS: UsageGranularity[] = ["hour", "day", "week", "month"];
+export const GRANULARITY_LABEL_KEYS = ["granularity.hour", "granularity.day", "granularity.week", "granularity.month"] as const;
 
 export const AGENT_ORDER = ["claude", "codex", "opencode", "pi"];
 export const AGENT_COLORS: Record<string, string> = {

@@ -116,6 +116,23 @@ export const usageRefreshRpc = defineRpc({
   output: z.object({ started: z.boolean() }),
 });
 
+export const sessionItemSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  agent: z.string(),
+  project: z.string(),
+  start: z.number(),
+  end: z.number(),
+  requests: z.number(),
+  input: z.number(),
+  output: z.number(),
+  cacheRead: z.number(),
+  cacheWrite: z.number(),
+  totalTokens: z.number(),
+  reportedCostUsd: z.number(),
+  credits: z.number(),
+});
+
 export const agentReportOutput = z.object({
   agent: z.string(),
   label: z.string(),
@@ -124,6 +141,8 @@ export const agentReportOutput = z.object({
   models: z.array(modelItemSchema),
   projects: z.array(projectItemSchema),
   requests: z.array(callRecordSchema),
+  sessionCount: z.number(),
+  sessions: z.array(sessionItemSchema),
 });
 
 export const usageAgentRpc = defineRpc({
@@ -240,3 +259,4 @@ export type UsageAgent = z.infer<typeof agentItemSchema>;
 export type UsageSeriesPoint = z.infer<typeof seriesPointSchema>;
 export type UsageAgentReport = z.infer<typeof agentReportOutput>;
 export type UsageCallRecord = z.infer<typeof callRecordSchema>;
+export type UsageSessionItem = z.infer<typeof sessionItemSchema>;

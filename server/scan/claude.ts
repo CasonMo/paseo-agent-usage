@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { addBucket, recordCall, type FileState, type RecentContribution, type ScanState } from "./state";
-import { forEachNewLine, localHourKey, num } from "./util";
+import { addBucket, applySession, recordCall, type FileState, type RecentContribution, type ScanState } from "./state";
+import { clipTitle, firstMessageText, forEachNewLine, localHourKey, MACHINE_LABEL, num } from "./util";
 
 export const CLAUDE = "claude";
 
@@ -14,10 +14,25 @@ export function claudeRoots(env: NodeJS.ProcessEnv = process.env): string[] {
 export async function scanClaudeFile(state: ScanState, path: string): Promise<void> {
   const previousState = state.files[path];
   const recent = new Map<string, RecentContribution>();
+  let sessionTitle = previousState?.sessionTitle ?? "";
   if (previousState?.recent) {
     for (const contribution of previousState.recent) recent.set(contribution.id, contribution);
   }
   const result = await forEachNewLine(path, previousState?.offset ?? 0, (line) => {
+    if (!line.includes('"sessionId"')) return;
+    if (line.includes('"type":"user"')) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry?.type === "user") {
+          const raw = firstMessageText(entry.message?.content);
+          const text = raw && !MACHINE_LABEL.test(raw.trim()) ? clipTitle(raw) : "";
+          if (text && !sessionTitle) sessionTitle = text;
+          return;
+        }
+      } catch {
+        /* fall through: this line is not a parseable user entry */
+      }
+    }
     if (!line.includes('"usage"') || !line.includes('"assistant"')) return;
     let entry: any;
     try {
@@ -33,6 +48,7 @@ export async function scanClaudeFile(state: ScanState, path: string): Promise<vo
     const ts = Date.parse(entry.timestamp);
     if (!Number.isFinite(ts)) return;
     const id = typeof message.id === "string" && message.id ? message.id : null;
+    const sid = typeof entry.sessionId === "string" ? entry.sessionId : "";
     const contribution: RecentContribution = {
       id: id ?? "",
       d: localHourKey(ts),
@@ -47,6 +63,14 @@ export async function scanClaudeFile(state: ScanState, path: string): Promise<vo
     if (id && recent.has(id)) {
       const before = recent.get(id) as RecentContribution;
       addBucket(state.buckets, before.d, CLAUDE, before.m, before.p, {
+        r: -1,
+        i: -before.i,
+        o: -before.o,
+        cr: -before.cr,
+        cw: -before.cw,
+        rz: -before.rz,
+      });
+      applySession(state.sessions, CLAUDE, sid, {
         r: -1,
         i: -before.i,
         o: -before.o,
@@ -70,6 +94,17 @@ export async function scanClaudeFile(state: ScanState, path: string): Promise<vo
       cw: contribution.cw,
       rz: contribution.rz,
     });
+    applySession(state.sessions, CLAUDE, sid, {
+      t: ts,
+      r: 1,
+      p: contribution.p,
+      i: contribution.i,
+      o: contribution.o,
+      cr: contribution.cr,
+      cw: contribution.cw,
+      rz: contribution.rz,
+      title: sessionTitle || undefined,
+    });
     recordCall(
       state,
       CLAUDE,
@@ -77,7 +112,7 @@ export async function scanClaudeFile(state: ScanState, path: string): Promise<vo
         t: ts,
         m: contribution.m,
         p: contribution.p,
-        s: typeof entry.sessionId === "string" ? entry.sessionId : "",
+        s: sid,
         i: contribution.i,
         o: contribution.o,
         cr: contribution.cr,
@@ -92,6 +127,7 @@ export async function scanClaudeFile(state: ScanState, path: string): Promise<vo
   });
   if (!result) return;
   const fileState: FileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs };
+  if (sessionTitle) fileState.sessionTitle = sessionTitle;
   if (recent.size > 0) fileState.recent = [...recent.values()].slice(-96);
   state.files[path] = fileState;
 }

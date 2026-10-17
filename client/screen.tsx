@@ -6,7 +6,7 @@ import type { UsageGranularity, UsageRangeKey } from "../shared/usage";
 import { AgentTab } from "./agent-tab";
 import { ConfigScreen } from "./config";
 import { DateRangePicker } from "./date-range";
-import { AGENT_COLORS, FALLBACK_COLOR, TrendChart, type ChartMode } from "./charts";
+import { AGENT_COLORS, FALLBACK_COLOR, GRANULARITY_KEYS, GRANULARITY_LABEL_KEYS, TrendChart, type ChartMode } from "./charts";
 import { useRefreshUsage, useUsageReport, useUpdateCheck } from "./data";
 import { formatCredits, formatPercent, formatTokens, shortProject } from "./format";
 import { useI18n, type Translate } from "./i18n";
@@ -39,9 +39,6 @@ function defaultCustomRange(): { from: string; to: string } {
 
 const CHART_MODE_KEYS: ChartMode[] = ["bar", "line"];
 const CHART_MODE_LABEL_KEYS = ["chart.bar", "chart.line"] as const;
-
-const GRANULARITY_KEYS: UsageGranularity[] = ["hour", "day", "week", "month"];
-const GRANULARITY_LABEL_KEYS = ["granularity.hour", "granularity.day", "granularity.week", "granularity.month"] as const;
 
 export function UsageScreen(props: PluginScreenProps) {
   const { theme, layout } = props;
@@ -316,7 +313,7 @@ export function UsageScreen(props: PluginScreenProps) {
         ) : null}
 
         {activeTab !== "overview" ? (
-          <AgentTab agent={activeTab} range={range} origin={deviceOrigin} custom={customPayload} granularity={granularity} theme={theme} compact={compact} chartMode={chartMode} />
+          <AgentTab agent={activeTab} range={range} origin={deviceOrigin} custom={customPayload} granularity={granularity} onGranularity={setGranularity} theme={theme} compact={compact} chartMode={chartMode} />
         ) : hasData ? (
           <>
             <View style={styles.cardRow}>

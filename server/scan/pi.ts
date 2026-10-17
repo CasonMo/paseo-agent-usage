@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { addBucket, recordCall, type ScanState } from "./state";
-import { forEachNewLine, localDateKey, num } from "./util";
+import { forEachNewLine, localHourKey, num } from "./util";
 
 export const PI = "pi";
 
@@ -68,7 +68,7 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
     }
     const cost = typeof usage.cost?.total === "number" && usage.cost.total > 0 ? usage.cost.total : 0;
     const model = typeof message.model === "string" && message.model ? message.model : "unknown";
-    addBucket(state.buckets, localDateKey(ts), PI, model, project, {
+    addBucket(state.buckets, localHourKey(ts), PI, model, project, {
       r: 1,
       i: num(usage.input),
       o: num(usage.output),

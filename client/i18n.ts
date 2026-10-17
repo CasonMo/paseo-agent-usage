@@ -82,12 +82,18 @@ const zh = {
   "update.available": "发现新版本 v{latest}（当前 v{current}）· 更新：paseo plugin update agent-usage-plugin",
   "update.dismiss": "关闭",
 
+  "range.24h": "近24小时",
   "range.today": "今日",
   "range.7d": "近 7 天",
   "range.30d": "近 30 天",
   "range.12w": "近 12 周",
   "range.12m": "近 12 月",
   "range.custom": "自定义",
+
+  "granularity.hour": "小时",
+  "granularity.day": "日",
+  "granularity.week": "周",
+  "granularity.month": "月",
 
   "chart.bar": "柱状图",
   "chart.line": "折线图",
@@ -224,12 +230,18 @@ const en: Record<DictKey, string> = {
   "update.available": "New version v{latest} is available (current v{current}) · Update: paseo plugin update agent-usage-plugin",
   "update.dismiss": "Dismiss",
 
+  "range.24h": "Last 24 hours",
   "range.today": "Today",
   "range.7d": "Last 7 days",
   "range.30d": "Last 30 days",
   "range.12w": "Last 12 weeks",
   "range.12m": "Last 12 months",
   "range.custom": "Custom",
+
+  "granularity.hour": "Hour",
+  "granularity.day": "Day",
+  "granularity.week": "Week",
+  "granularity.month": "Month",
 
   "chart.bar": "Bars",
   "chart.line": "Line",

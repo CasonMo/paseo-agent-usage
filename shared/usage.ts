@@ -1,8 +1,11 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
-export const usageRangeSchema = z.enum(["today", "7d", "30d", "12w", "12m", "custom"]);
+export const usageRangeSchema = z.enum(["24h", "today", "7d", "30d", "12w", "12m", "custom"]);
 export type UsageRangeKey = z.infer<typeof usageRangeSchema>;
+
+export const usageGranularitySchema = z.enum(["hour", "day", "week", "month"]);
+export type UsageGranularity = z.infer<typeof usageGranularitySchema>;
 
 export const totalsSchema = z.object({
   requests: z.number(),
@@ -18,6 +21,7 @@ export const totalsSchema = z.object({
 export const seriesPointSchema = z.object({
   key: z.string(),
   label: z.string(),
+  full: z.string(),
   totalTokens: z.number(),
   credits: z.number(),
   byAgent: z.record(z.string(), z.number()),
@@ -96,7 +100,13 @@ export const usageReportOutput = z.object({
 
 export const usageReportRpc = defineRpc({
   name: "usage.report",
-  input: z.object({ range: usageRangeSchema, origin: z.string().optional(), from: z.string().optional(), to: z.string().optional() }),
+  input: z.object({
+    range: usageRangeSchema,
+    granularity: usageGranularitySchema.optional(),
+    origin: z.string().optional(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+  }),
   output: usageReportOutput,
 });
 
@@ -118,7 +128,14 @@ export const agentReportOutput = z.object({
 
 export const usageAgentRpc = defineRpc({
   name: "usage.agent",
-  input: z.object({ agent: z.string(), range: usageRangeSchema, origin: z.string().optional(), from: z.string().optional(), to: z.string().optional() }),
+  input: z.object({
+    agent: z.string(),
+    range: usageRangeSchema,
+    granularity: usageGranularitySchema.optional(),
+    origin: z.string().optional(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+  }),
   output: agentReportOutput,
 });
 

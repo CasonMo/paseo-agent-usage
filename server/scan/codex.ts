@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { addBucket, recordCall, type CodexForkState, type FileState, type ScanState } from "./state";
-import { forEachNewLine, localDateKey, num } from "./util";
+import { forEachNewLine, localHourKey, num } from "./util";
 
 export const CODEX = "codex";
 
@@ -102,7 +102,7 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
           const lOutput = num(last.output_tokens);
           if (lInput + lCached + lOutput > 0) {
             const input = Math.max(0, lInput - lCached);
-            addBucket(state.buckets, localDateKey(ts), CODEX, model || "codex", project, {
+            addBucket(state.buckets, localHourKey(ts), CODEX, model || "codex", project, {
               r: 1,
               i: input,
               o: lOutput,
@@ -155,7 +155,7 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
     if (dTotal <= 0) return;
     if (!Number.isFinite(ts)) return;
     const input = Math.max(0, dInput - dCached);
-    addBucket(state.buckets, localDateKey(ts), CODEX, model || "codex", project, {
+    addBucket(state.buckets, localHourKey(ts), CODEX, model || "codex", project, {
       r: 1,
       i: input,
       o: dOutput,

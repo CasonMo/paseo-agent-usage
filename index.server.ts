@@ -5,9 +5,9 @@ import { usageAgentRpc, usageAgentsGetRpc, usageAgentsSetRpc, usageHostsListRpc,
 
 export default function contribute(server: PluginServerContext) {
   const service = createUsageService();
-  server.handle(usageReportRpc, (input) => service.report(input.range, input.origin, input.from || input.to ? { from: input.from, to: input.to } : undefined));
+  server.handle(usageReportRpc, (input) => service.report(input.range, input.origin, input.from || input.to ? { from: input.from, to: input.to } : undefined, input.granularity));
   server.handle(usageRefreshRpc, () => service.refresh());
-  server.handle(usageAgentRpc, (input) => service.agentReport(input.agent, input.range, input.origin, input.from || input.to ? { from: input.from, to: input.to } : undefined));
+  server.handle(usageAgentRpc, (input) => service.agentReport(input.agent, input.range, input.origin, input.from || input.to ? { from: input.from, to: input.to } : undefined, input.granularity));
   server.handle(usageHostsListRpc, () => service.hostsList());
   server.handle(usageHostsSetRpc, (input) => service.hostsSet(input.hosts));
   server.handle(usageHostsTestRpc, (input) => service.hostTest(input.host));

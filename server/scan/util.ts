@@ -12,6 +12,11 @@ export function localDateKey(ms: number): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
+export function localHourKey(ms: number): string {
+  const date = new Date(ms);
+  return `${localDateKey(ms)}T${String(date.getHours()).padStart(2, "0")}`;
+}
+
 export async function listJsonlFiles(root: string): Promise<string[]> {
   const files: string[] = [];
   const queue: string[] = [root];

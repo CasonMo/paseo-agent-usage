@@ -1,17 +1,17 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { UsageAgentReport, UsageAgentSetItem, UsageAgentToggle, UsageHostForm, UsageHostListItem, UsagePrefs, UsageRangeKey, UsageReport } from "../shared/usage";
+import type { UsageAgentReport, UsageAgentSetItem, UsageAgentToggle, UsageGranularity, UsageHostForm, UsageHostListItem, UsagePrefs, UsageRangeKey, UsageReport } from "../shared/usage";
 import { buildAgentReport, buildReport, type HostView } from "./report";
 import { setServerLocale, st } from "./i18n";
 import { applyHostForms, readHostsFile, writeHostsFile } from "./remote/hosts-file";
 import { pullHost, testHost, type HostConfig } from "./remote/ssh";
 import { scanAll } from "./scan/scanner";
-import { emptyState, loadState, pluginDataDir, saveState, type CallRecord, type DayBucket, type RemoteHostState, type ScanState } from "./scan/state";
+import { emptyState, loadState, pluginDataDir, saveState, type CallRecord, type UsageBucket, type RemoteHostState, type ScanState } from "./scan/state";
 import { num } from "./scan/util";
 
 export interface UsageService {
-  report(range: UsageRangeKey, origin?: string, custom?: { from?: string; to?: string }): Promise<UsageReport>;
-  agentReport(agent: string, range: UsageRangeKey, origin?: string, custom?: { from?: string; to?: string }): Promise<UsageAgentReport>;
+  report(range: UsageRangeKey, origin?: string, custom?: { from?: string; to?: string }, granularity?: UsageGranularity): Promise<UsageReport>;
+  agentReport(agent: string, range: UsageRangeKey, origin?: string, custom?: { from?: string; to?: string }, granularity?: UsageGranularity): Promise<UsageAgentReport>;
   agentsGet(): Promise<{ agents: UsageAgentToggle[] }>;
   agentsSet(agents: UsageAgentSetItem[]): Promise<{ saved: boolean; error: string | null }>;
   prefsGet(locale?: "zh" | "en"): Promise<UsagePrefs>;
@@ -65,8 +65,8 @@ function sanitizePrefs(raw: unknown): UsagePrefs {
   return next;
 }
 
-function sanitizeBuckets(raw: unknown): Record<string, DayBucket> {
-  const buckets: Record<string, DayBucket> = {};
+function sanitizeBuckets(raw: unknown): Record<string, UsageBucket> {
+  const buckets: Record<string, UsageBucket> = {};
   if (!raw || typeof raw !== "object") return buckets;
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!value || typeof value !== "object") continue;
@@ -372,20 +372,20 @@ export function createUsageService(): UsageService {
     timer.unref?.();
   }
 
-  async function report(range: UsageRangeKey, origin?: string, custom?: { from?: string; to?: string }): Promise<UsageReport> {
+  async function report(range: UsageRangeKey, origin?: string, custom?: { from?: string; to?: string }, granularity?: UsageGranularity): Promise<UsageReport> {
     await loaded;
     await refreshHostConfigs(false);
     await refreshAgentsConfig(false);
     if (!state.meta.lastScanAt && !scanning) schedule(0);
     else if (dirty && !scanning) schedule(2_000);
-    return buildReport(state, range, { scanning, done, total }, hostViews(), origin, enabledHarnesses(), custom);
+    return buildReport(state, range, { scanning, done, total }, hostViews(), origin, enabledHarnesses(), custom, granularity ?? "day");
   }
 
-  async function agentReport(agent: string, range: UsageRangeKey, origin?: string, custom?: { from?: string; to?: string }): Promise<UsageAgentReport> {
+  async function agentReport(agent: string, range: UsageRangeKey, origin?: string, custom?: { from?: string; to?: string }, granularity?: UsageGranularity): Promise<UsageAgentReport> {
     await loaded;
     await refreshAgentsConfig(false);
     if (dirty && !scanning) schedule(2_000);
-    return buildAgentReport(state, agent, range, origin, enabledHarnesses(), custom);
+    return buildAgentReport(state, agent, range, origin, enabledHarnesses(), custom, granularity ?? "day");
   }
 
   async function hostsList(): Promise<{ hosts: UsageHostListItem[] }> {

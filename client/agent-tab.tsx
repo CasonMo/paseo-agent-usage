@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import type { TextStyle, ViewStyle } from "react-native";
 import { Text, View } from "react-native";
-import type { UsageRangeKey } from "../shared/usage";
+import type { UsageGranularity, UsageRangeKey } from "../shared/usage";
 import { AGENT_COLORS, FALLBACK_COLOR, TrendChart, type ChartMode } from "./charts";
 import { useAgentReport, type CustomRange } from "./data";
 import { formatCredits, formatPercent, formatTokens, shortProject } from "./format";
@@ -24,6 +24,7 @@ export function AgentTab({
   range,
   origin,
   custom,
+  granularity,
   theme,
   compact,
   chartMode,
@@ -32,11 +33,12 @@ export function AgentTab({
   range: UsageRangeKey;
   origin?: string;
   custom?: CustomRange;
+  granularity: UsageGranularity;
   theme: Theme;
   compact: boolean;
   chartMode: ChartMode;
 }) {
-  const query = useAgentReport(agent, range, true, origin, custom);
+  const query = useAgentReport(agent, range, true, origin, custom, granularity);
   const { t } = useI18n();
   const data = query.data;
   const styles = useMemo(

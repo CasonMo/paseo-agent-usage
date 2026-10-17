@@ -12,7 +12,7 @@ var import_node_path3 = require("path");
 // server/scan/state.ts
 var import_promises = require("fs/promises");
 var import_node_path = require("path");
-var STATE_VERSION = 9;
+var STATE_VERSION = 10;
 var MAX_RECENT_PER_AGENT = 400;
 function emptyState() {
   return {
@@ -26,11 +26,11 @@ function emptyState() {
     meta: { lastScanAt: null, scanError: null }
   };
 }
-function bucketKey(date, harness, model, project) {
-  return [date, harness, model, project].join("");
+function bucketKey(hourKey, harness, model, project) {
+  return [hourKey, harness, model, project].join("");
 }
-function addBucket(buckets, date, harness, model, project, delta) {
-  const key = bucketKey(date, harness, model, project);
+function addBucket(buckets, hourKey, harness, model, project, delta) {
+  const key = bucketKey(hourKey, harness, model, project);
   let bucket = buckets[key];
   if (!bucket) {
     bucket = { r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0 };
@@ -111,6 +111,10 @@ function localDateKey(ms) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return \`\${date.getFullYear()}-\${month}-\${day}\`;
+}
+function localHourKey(ms) {
+  const date = new Date(ms);
+  return \`\${localDateKey(ms)}T\${String(date.getHours()).padStart(2, "0")}\`;
 }
 async function listJsonlFiles(root) {
   const files = [];
@@ -196,7 +200,7 @@ async function scanClaudeFile(state, path) {
     const id = typeof message.id === "string" && message.id ? message.id : null;
     const contribution = {
       id: id ?? "",
-      d: localDateKey(ts),
+      d: localHourKey(ts),
       m: typeof message.model === "string" && message.model ? message.model : "unknown",
       p: typeof entry.cwd === "string" ? entry.cwd : "",
       i: num(usage.input_tokens),
@@ -338,7 +342,7 @@ async function scanCodexFile(state, path) {
           const lOutput = num(last.output_tokens);
           if (lInput + lCached + lOutput > 0) {
             const input2 = Math.max(0, lInput - lCached);
-            addBucket(state.buckets, localDateKey(ts), CODEX, model || "codex", project, {
+            addBucket(state.buckets, localHourKey(ts), CODEX, model || "codex", project, {
               r: 1,
               i: input2,
               o: lOutput,
@@ -388,7 +392,7 @@ async function scanCodexFile(state, path) {
     if (dTotal <= 0) return;
     if (!Number.isFinite(ts)) return;
     const input = Math.max(0, dInput - dCached);
-    addBucket(state.buckets, localDateKey(ts), CODEX, model || "codex", project, {
+    addBucket(state.buckets, localHourKey(ts), CODEX, model || "codex", project, {
       r: 1,
       i: input,
       o: dOutput,
@@ -486,7 +490,7 @@ async function scanOpencode(state) {
         const model = typeof data.modelID === "string" && data.modelID ? data.modelID : "unknown";
         const project = typeof ((_b = data.path) == null ? void 0 : _b.cwd) === "string" ? data.path.cwd : "";
         const outputWithReasoning = output + reasoning;
-        addBucket(state.buckets, localDateKey(ts), OPENCODE, model, project, {
+        addBucket(state.buckets, localHourKey(ts), OPENCODE, model, project, {
           r: 1,
           i: input,
           o: outputWithReasoning,
@@ -573,7 +577,7 @@ async function scanPiFile(state, path) {
     }
     const cost = typeof ((_a = usage.cost) == null ? void 0 : _a.total) === "number" && usage.cost.total > 0 ? usage.cost.total : 0;
     const model = typeof message.model === "string" && message.model ? message.model : "unknown";
-    addBucket(state.buckets, localDateKey(ts), PI, model, project, {
+    addBucket(state.buckets, localHourKey(ts), PI, model, project, {
       r: 1,
       i: num(usage.input),
       o: num(usage.output),

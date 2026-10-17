@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { addBucket, recordCall, type FileState, type RecentContribution, type ScanState } from "./state";
-import { forEachNewLine, localDateKey, num } from "./util";
+import { forEachNewLine, localHourKey, num } from "./util";
 
 export const CLAUDE = "claude";
 
@@ -35,7 +35,7 @@ export async function scanClaudeFile(state: ScanState, path: string): Promise<vo
     const id = typeof message.id === "string" && message.id ? message.id : null;
     const contribution: RecentContribution = {
       id: id ?? "",
-      d: localDateKey(ts),
+      d: localHourKey(ts),
       m: typeof message.model === "string" && message.model ? message.model : "unknown",
       p: typeof entry.cwd === "string" ? entry.cwd : "",
       i: num(usage.input_tokens),

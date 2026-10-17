@@ -2,7 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useMemo, useState } from "react";
 import type { TextStyle, ViewStyle } from "react-native";
 import { Pressable, ScrollView, Text, View } from "react-native";
-import type { UsageRangeKey } from "../shared/usage";
+import type { UsageGranularity, UsageRangeKey } from "../shared/usage";
 import { AgentTab } from "./agent-tab";
 import { ConfigScreen } from "./config";
 import { DateRangePicker } from "./date-range";
@@ -24,8 +24,8 @@ function originStatusText(t: Translate, status: string, lastPullAt: number | nul
   return t("origin.ok");
 }
 
-const RANGE_KEYS: UsageRangeKey[] = ["today", "7d", "30d", "12w", "12m", "custom"];
-const RANGE_LABEL_KEYS = ["range.today", "range.7d", "range.30d", "range.12w", "range.12m", "range.custom"] as const;
+const RANGE_KEYS: UsageRangeKey[] = ["24h", "today", "7d", "30d", "12w", "12m", "custom"];
+const RANGE_LABEL_KEYS = ["range.24h", "range.today", "range.7d", "range.30d", "range.12w", "range.12m", "range.custom"] as const;
 
 function defaultCustomRange(): { from: string; to: string } {
   const today = new Date();
@@ -40,6 +40,9 @@ function defaultCustomRange(): { from: string; to: string } {
 const CHART_MODE_KEYS: ChartMode[] = ["bar", "line"];
 const CHART_MODE_LABEL_KEYS = ["chart.bar", "chart.line"] as const;
 
+const GRANULARITY_KEYS: UsageGranularity[] = ["hour", "day", "week", "month"];
+const GRANULARITY_LABEL_KEYS = ["granularity.hour", "granularity.day", "granularity.week", "granularity.month"] as const;
+
 export function UsageScreen(props: PluginScreenProps) {
   const { theme, layout } = props;
   const [range, setRange] = useState<UsageRangeKey>("7d");
@@ -47,6 +50,7 @@ export function UsageScreen(props: PluginScreenProps) {
   const [device, setDevice] = useState<string>("aggregate");
   const [tab, setTab] = useState<string>("overview");
   const [chartMode, setChartMode] = useState<ChartMode>("bar");
+  const [granularity, setGranularity] = useState<UsageGranularity>("day");
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
   const [showNotes, setShowNotes] = useState(true);
@@ -57,11 +61,15 @@ export function UsageScreen(props: PluginScreenProps) {
     if (range !== "custom" || !customFrom || !customTo) return undefined;
     return { from: customFrom, to: customTo };
   }, [range, customFrom, customTo]);
-  const query = useUsageReport(range, deviceOrigin, customPayload);
+  const query = useUsageReport(range, deviceOrigin, customPayload, granularity);
   const refresh = useRefreshUsage();
   const { t } = useI18n();
   const ranges = useMemo(() => RANGE_KEYS.map((key, index) => ({ key, label: t(RANGE_LABEL_KEYS[index]) })), [t]);
   const chartModes = useMemo(() => CHART_MODE_KEYS.map((key, index) => ({ key, label: t(CHART_MODE_LABEL_KEYS[index]) })), [t]);
+  const granularities = useMemo(
+    () => GRANULARITY_KEYS.map((key, index) => ({ key, label: t(GRANULARITY_LABEL_KEYS[index]) })),
+    [t],
+  );
   const compact = layout.compact;
   const styles = useMemo(
     () =>
@@ -308,7 +316,7 @@ export function UsageScreen(props: PluginScreenProps) {
         ) : null}
 
         {activeTab !== "overview" ? (
-          <AgentTab agent={activeTab} range={range} origin={deviceOrigin} custom={customPayload} theme={theme} compact={compact} chartMode={chartMode} />
+          <AgentTab agent={activeTab} range={range} origin={deviceOrigin} custom={customPayload} granularity={granularity} theme={theme} compact={compact} chartMode={chartMode} />
         ) : hasData ? (
           <>
             <View style={styles.cardRow}>
@@ -324,6 +332,18 @@ export function UsageScreen(props: PluginScreenProps) {
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>{t("section.trend")}</Text>
                 <View style={styles.modeRow}>
+                  {granularities.map((item) => {
+                    const active = granularity === item.key;
+                    return (
+                      <Pressable
+                        key={item.key}
+                        onPress={() => setGranularity(item.key)}
+                        style={active ? [styles.modeButton, styles.modeButtonActive] : styles.modeButton}
+                      >
+                        <Text style={active ? [styles.modeText, styles.modeTextActive] : styles.modeText}>{item.label}</Text>
+                      </Pressable>
+                    );
+                  })}
                   {chartModes.map((item) => {
                     const active = chartMode === item.key;
                     return (

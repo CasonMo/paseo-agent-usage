@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { addBucket, recordCall, type ScanState } from "./state";
-import { localDateKey, num } from "./util";
+import { localHourKey, num } from "./util";
 
 export const OPENCODE = "opencode";
 
@@ -104,7 +104,7 @@ export async function scanOpencode(state: ScanState): Promise<void> {
         // so fold them into `o` (matches CC Switch and real spend). `rz` keeps
         // the reasoning share for display only.
         const outputWithReasoning = output + reasoning;
-        addBucket(state.buckets, localDateKey(ts), OPENCODE, model, project, {
+        addBucket(state.buckets, localHourKey(ts), OPENCODE, model, project, {
           r: 1,
           i: input,
           o: outputWithReasoning,

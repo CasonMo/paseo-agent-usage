@@ -2,9 +2,10 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
-export const STATE_VERSION = 9;
+export const STATE_VERSION = 10;
 
-export interface DayBucket {
+/** Usage aggregate for one hour bucket. Bucket keys start with an hour key `YYYY-MM-DDTHH`. */
+export interface UsageBucket {
   r: number;
   i: number;
   o: number;
@@ -67,7 +68,7 @@ export interface FileState {
 
 export interface RemoteHostState {
   target: string;
-  buckets: Record<string, DayBucket>;
+  buckets: Record<string, UsageBucket>;
   recent: Record<string, CallRecord[]>;
   lastPullAt: number | null;
   lastAttemptAt: number | null;
@@ -78,7 +79,7 @@ export interface RemoteHostState {
 
 export interface ScanState {
   version: typeof STATE_VERSION;
-  buckets: Record<string, DayBucket>;
+  buckets: Record<string, UsageBucket>;
   files: Record<string, FileState>;
   recent: Record<string, CallRecord[]>;
   opencode: { watermark: number };
@@ -122,19 +123,20 @@ export function pluginDataDir(): string {
   return join(resolvePaseoHome(), "plugin-data", "agent-usage-plugin");
 }
 
-export function bucketKey(date: string, harness: string, model: string, project: string): string {
-  return [date, harness, model, project].join("\u0001");
+/** Bucket keys are `hourKey \u0001 harness \u0001 model \u0001 project`, where hourKey is `YYYY-MM-DDTHH`. */
+export function bucketKey(hourKey: string, harness: string, model: string, project: string): string {
+  return [hourKey, harness, model, project].join("\u0001");
 }
 
 export function addBucket(
-  buckets: Record<string, DayBucket>,
-  date: string,
+  buckets: Record<string, UsageBucket>,
+  hourKey: string,
   harness: string,
   model: string,
   project: string,
-  delta: Partial<DayBucket> & { r: number },
+  delta: Partial<UsageBucket> & { r: number },
 ): void {
-  const key = bucketKey(date, harness, model, project);
+  const key = bucketKey(hourKey, harness, model, project);
   let bucket = buckets[key];
   if (!bucket) {
     bucket = { r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0 };

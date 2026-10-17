@@ -4,7 +4,7 @@
  */
 import { buildReport } from "../report";
 import { scanAll } from "../scan/scanner";
-import { emptyState, loadState, pluginDataDir, saveState, type DayBucket } from "../scan/state";
+import { emptyState, loadState, pluginDataDir, saveState, type UsageBucket } from "../scan/state";
 
 async function main(): Promise<void> {
   const dirArgIndex = process.argv.indexOf("--dir");
@@ -37,7 +37,7 @@ async function main(): Promise<void> {
   console.log("firstDay:", report.firstDay, "| buckets:", Object.keys(state.buckets).length, "| elapsed:", ((Date.now() - startedAt) / 1000).toFixed(1) + "s");
   console.log("recent records:", JSON.stringify(Object.fromEntries(Object.entries(state.recent).map(([key, list]) => [key, list.length]))));
   const allTime: Record<string, { requests: number; tokens: number }> = {};
-  for (const [key, bucket] of Object.entries(state.buckets) as Array<[string, DayBucket]>) {
+  for (const [key, bucket] of Object.entries(state.buckets) as Array<[string, UsageBucket]>) {
     const harness = key.split("\u0001")[1] ?? "?";
     const entry = allTime[harness] ?? { requests: 0, tokens: 0 };
     entry.requests += bucket.r;

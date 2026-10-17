@@ -53,7 +53,7 @@ function Tooltip({ point, theme, metric }: { point: UsageSeriesPoint; theme: The
           minWidth: 150,
         }}
       >
-        <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{point.label}</Text>
+        <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{point.full}</Text>
         {metric === "credits" ? (
           <Text style={{ fontSize: 12, fontWeight: "700", color: theme.colors.foreground }}>{t("unit.credits", { n: formatCredits(point.credits) })}</Text>
         ) : (
@@ -77,6 +77,7 @@ function BarLayer({
   points,
   max,
   height,
+  gap,
   theme,
   activeIndex,
   metric,
@@ -85,6 +86,7 @@ function BarLayer({
   points: UsageSeriesPoint[];
   max: number;
   height: number;
+  gap: number;
   theme: Theme;
   activeIndex: number | null;
   metric: ChartMetric;
@@ -92,7 +94,7 @@ function BarLayer({
 }) {
   const valueOf = (point: UsageSeriesPoint) => (metric === "credits" ? point.credits : point.totalTokens);
   return (
-    <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 3, height }}>
+    <View style={{ flexDirection: "row", alignItems: "flex-end", gap, height }}>
       {points.map((point, index) => {
         const total = valueOf(point);
         const columnHeight = total <= 0 ? 2 : Math.max(3, Math.round((total / max) * height));
@@ -266,6 +268,13 @@ export function TrendChart({
   const max = Math.max(1, ...points.map(valueOf));
   const height = compact ? 96 : 140;
   const activeIndex = active !== null && active < points.length ? active : null;
+  const labelStep = Math.max(1, Math.ceil(points.length / 12));
+  const crowded = points.length > 14;
+  // With many points a 3px gap (and per-point label cells) no longer fits:
+  // flex would squeeze every bar below zero width. Drop the gap and render
+  // labels as absolutely centered texts so dense ranges still draw as columns.
+  const barGap = points.length * 4 <= width ? 3 : 0;
+  const rowGap = mode === "bar" ? barGap : 3;
   const hoverProps = (index: number) => ({
     onHoverIn: () => setActive(index),
     onHoverOut: () => setActive((current) => (current === index ? null : current)),
@@ -275,27 +284,36 @@ export function TrendChart({
     <View>
       <View style={{ position: "relative" }} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
         {mode === "bar" ? (
-          <BarLayer points={points} max={max} height={height} theme={theme} activeIndex={activeIndex} metric={metric} singleAgent={singleAgent} />
+          <BarLayer points={points} max={max} height={height} gap={barGap} theme={theme} activeIndex={activeIndex} metric={metric} singleAgent={singleAgent} />
         ) : (
           <LineLayer points={points} max={max} height={height} width={width} theme={theme} activeIndex={activeIndex} metric={metric} singleAgent={singleAgent} />
         )}
-        <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, flexDirection: "row", gap: 3 }}>
+        <View style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, flexDirection: "row", gap: rowGap }}>
           {points.map((point, index) => (
             <Pressable key={point.key} style={{ flex: 1 }} accessibilityLabel={t("chart.pointA11y", { label: point.label })} {...hoverProps(index)} />
           ))}
         </View>
         {activeIndex !== null ? <Tooltip point={points[activeIndex] as UsageSeriesPoint} theme={theme} metric={metric} /> : null}
       </View>
-      <View style={{ flexDirection: "row", gap: 3, marginTop: 6 }}>
-        {points.map((point, index) => (
-          <Text
-            key={point.key}
-            numberOfLines={1}
-            style={{ flex: 1, fontSize: 9, textAlign: "center", color: theme.colors.foregroundMuted }}
-          >
-            {points.length <= 14 || index % 3 === 0 || index === points.length - 1 ? point.label : ""}
-          </Text>
-        ))}
+      <View style={{ flexDirection: "row", gap: rowGap, marginTop: 6 }}>
+        {points.map((point, index) => {
+          const show = index % labelStep === 0 || index === points.length - 1;
+          if (!show) return <View key={point.key} style={{ flex: 1, height: 12 }} />;
+          return (
+            <View key={point.key} style={crowded ? { flex: 1, height: 12 } : { flex: 1 }}>
+              <Text
+                numberOfLines={1}
+                style={
+                  crowded
+                    ? { position: "absolute", left: -20, width: 40, fontSize: 9, textAlign: "center", color: theme.colors.foregroundMuted }
+                    : { fontSize: 9, textAlign: "center", color: theme.colors.foregroundMuted }
+                }
+              >
+                {point.label}
+              </Text>
+            </View>
+          );
+        })}
       </View>
     </View>
   );

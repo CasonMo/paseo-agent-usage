@@ -222,6 +222,9 @@ export const usageLanguageSchema = z.enum(["auto", "zh", "en"]);
 export const usagePrefsSchema = z.object({
   language: usageLanguageSchema,
   refreshMinutes: z.number().int().min(0).max(1440),
+  localAlias: z.string().trim().max(40).optional(),
+  defaultRange: usageRangeSchema.optional(),
+  defaultGranularity: usageGranularitySchema.optional(),
 });
 
 export const usagePrefsGetRpc = defineRpc({

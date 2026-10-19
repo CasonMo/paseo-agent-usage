@@ -1,15 +1,21 @@
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import { useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { TextStyle, ViewStyle } from "react-native";
-import { Pressable, ScrollView, Switch, Text, View } from "react-native";
+import { Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { useAgentsConfig, usePrefs, useSetAgentsConfig, useSetPrefs } from "./data";
 import { detectSystemLocale, setLanguageMode, useI18n, type LanguageMode } from "./i18n";
+import type { UsageGranularity, UsageRangeKey } from "../shared/usage";
 import { HostsManager } from "./settings";
 
 type Theme = PluginSurfaceProps["theme"];
 
+type UsagePatch = { language: LanguageMode; refreshMinutes: number; localAlias?: string; defaultRange?: UsageRangeKey; defaultGranularity?: UsageGranularity };
+
 const PREFS_QUERY_KEY = ["agent-usage-prefs"];
+
+const DEFAULT_RANGE_OPTIONS: UsageRangeKey[] = ["24h", "today", "7d", "30d", "12w", "12m"];
+const DEFAULT_GRANULARITY_OPTIONS: UsageGranularity[] = ["hour", "day", "week", "month"];
 
 function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) {
   const { t } = useI18n();
@@ -31,12 +37,27 @@ function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) 
         chipActive: { backgroundColor: theme.colors.accent },
         chipText: { fontSize: 11, color: theme.colors.foregroundMuted },
         chipTextActive: { color: theme.colors.accentForeground },
+        input: {
+          borderRadius: 8,
+          backgroundColor: theme.colors.surface0,
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          fontSize: 12,
+          color: theme.colors.foreground,
+        },
+        saveButton: { alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: theme.colors.accent },
+        saveButtonText: { fontSize: 12, color: theme.colors.accentForeground },
         errorText: { fontSize: 11, color: theme.colors.statusDanger },
       }) satisfies Record<string, ViewStyle | TextStyle>,
     [theme, compact],
   );
 
-  const current = prefsQuery.data ?? { language: "auto" as LanguageMode, refreshMinutes: 30 };
+  const current = prefsQuery.data ?? { language: "auto" as LanguageMode, refreshMinutes: 30, localAlias: undefined };
+  const [aliasDraft, setAliasDraft] = useState("");
+  useEffect(() => {
+    setAliasDraft(current.localAlias ?? "");
+  }, [current.localAlias]);
+  const aliasDirty = aliasDraft.trim() !== (current.localAlias ?? "");
   const languageOptions: Array<{ value: LanguageMode; label: string }> = [
     { value: "auto", label: t("config.language.system") },
     { value: "zh", label: "中文" },
@@ -55,10 +76,17 @@ function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) 
     [t],
   );
 
-  const save = async (next: { language: LanguageMode; refreshMinutes: number }) => {
+  const save = async (patch: { language?: LanguageMode; refreshMinutes?: number; localAlias?: string; defaultRange?: UsageRangeKey; defaultGranularity?: UsageGranularity }) => {
     if (busy) return;
     setBusy(true);
     setMessage(null);
+    const next: UsagePatch = { language: patch.language ?? current.language, refreshMinutes: patch.refreshMinutes ?? current.refreshMinutes };
+    const alias = patch.localAlias ?? current.localAlias;
+    if (alias) next.localAlias = alias;
+    const defaultRange = patch.defaultRange ?? current.defaultRange;
+    if (defaultRange) next.defaultRange = defaultRange;
+    const defaultGranularity = patch.defaultGranularity ?? current.defaultGranularity;
+    if (defaultGranularity) next.defaultGranularity = defaultGranularity;
     try {
       const result = await setCall(next);
       if (result.saved) {
@@ -74,6 +102,10 @@ function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) 
     }
   };
 
+  const saveAlias = () => {
+    void save({ localAlias: aliasDraft.trim() });
+  };
+
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{t("config.general")}</Text>
@@ -86,7 +118,7 @@ function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) 
               <Pressable
                 key={item.value}
                 disabled={busy}
-                onPress={() => void save({ language: item.value, refreshMinutes: current.refreshMinutes })}
+                onPress={() => void save({ language: item.value })}
                 style={active ? [styles.chip, styles.chipActive] : styles.chip}
               >
                 <Text style={active ? [styles.chipText, styles.chipTextActive] : styles.chipText}>{item.label}</Text>
@@ -94,6 +126,60 @@ function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) 
             );
           })}
         </View>
+      </View>
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>{t("config.defaultRange")}</Text>
+        <View style={styles.chipRow}>
+          {DEFAULT_RANGE_OPTIONS.map((value) => {
+            const active = (current.defaultRange ?? "7d") === value;
+            return (
+              <Pressable
+                key={value}
+                disabled={busy}
+                onPress={() => void save({ defaultRange: value })}
+                style={active ? [styles.chip, styles.chipActive] : styles.chip}
+              >
+                <Text style={active ? [styles.chipText, styles.chipTextActive] : styles.chipText}>{t(`range.${value}`)}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>{t("config.defaultGranularity")}</Text>
+        <Text style={styles.hint}>{t("config.defaultHint")}</Text>
+        <View style={styles.chipRow}>
+          {DEFAULT_GRANULARITY_OPTIONS.map((value) => {
+            const active = (current.defaultGranularity ?? "day") === value;
+            return (
+              <Pressable
+                key={value}
+                disabled={busy}
+                onPress={() => void save({ defaultGranularity: value })}
+                style={active ? [styles.chip, styles.chipActive] : styles.chip}
+              >
+                <Text style={active ? [styles.chipText, styles.chipTextActive] : styles.chipText}>{t(`granularity.${value}`)}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>{t("config.localAlias", { default: current.localAlias || t("origin.local") })}</Text>
+        <Text style={styles.hint}>{t("config.localAliasHint", { default: current.localAlias || t("origin.local") })}</Text>
+        <TextInput
+          value={aliasDraft}
+          onChangeText={setAliasDraft}
+          placeholder={current.localAlias || t("origin.local")}
+          placeholderTextColor={theme.colors.foregroundMuted}
+          maxLength={40}
+          style={styles.input}
+        />
+        {aliasDirty ? (
+          <Pressable accessibilityRole="button" disabled={busy} onPress={saveAlias} style={styles.saveButton}>
+            <Text style={styles.saveButtonText}>{busy ? t("common.saving") : t("common.save")}</Text>
+          </Pressable>
+        ) : null}
       </View>
       <View style={styles.field}>
         <Text style={styles.fieldLabel}>{t("config.autoRefresh")}</Text>
@@ -105,7 +191,7 @@ function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) 
               <Pressable
                 key={item.minutes}
                 disabled={busy}
-                onPress={() => void save({ language: current.language, refreshMinutes: item.minutes })}
+                onPress={() => void save({ refreshMinutes: item.minutes })}
                 style={active ? [styles.chip, styles.chipActive] : styles.chip}
               >
                 <Text style={active ? [styles.chipText, styles.chipTextActive] : styles.chipText}>{item.label}</Text>

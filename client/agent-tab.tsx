@@ -61,6 +61,7 @@ export function AgentTab({
   theme,
   compact,
   chartMode,
+  localAlias,
 }: {
   agent: string;
   range: UsageRangeKey;
@@ -71,6 +72,7 @@ export function AgentTab({
   theme: Theme;
   compact: boolean;
   chartMode: ChartMode;
+  localAlias?: string;
 }) {
   const query = useAgentReport(agent, range, true, origin, custom, granularity);
   const { t } = useI18n();
@@ -254,7 +256,7 @@ export function AgentTab({
                 </View>
                 <Text style={styles.logMeta} numberOfLines={1}>
                   {shortProject(record.project)}
-                  {record.session ? ` · ${record.session.slice(0, 8)}` : ""} · {record.origin === "local" ? t("origin.local") : record.origin}
+                  {record.session ? ` · ${record.session.slice(0, 8)}` : ""} · {record.origin === "local" ? localAlias || t("origin.local") : record.origin}
                   {tokens > 0
                     ? ` · ${t("unit.in")} ${formatTokens(record.input)} · ${t("unit.out")} ${formatTokens(record.output)} · ${t("unit.cache")} ${formatTokens(record.cacheRead)}`
                     : ""}

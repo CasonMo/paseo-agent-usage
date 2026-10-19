@@ -7,9 +7,9 @@ import { AgentTab } from "./agent-tab";
 import { ConfigScreen } from "./config";
 import { DateRangePicker } from "./date-range";
 import { AGENT_COLORS, FALLBACK_COLOR, GRANULARITY_KEYS, GRANULARITY_LABEL_KEYS, TrendChart, type ChartMode } from "./charts";
-import { useRefreshUsage, useUsageReport, useUpdateCheck } from "./data";
+import { useRefreshUsage, usePrefs, useUsageReport, useUpdateCheck } from "./data";
 import { formatCredits, formatPercent, formatTokens, shortProject } from "./format";
-import { useI18n, type Translate } from "./i18n";
+import { detectSystemLocale, useI18n, type Translate } from "./i18n";
 
 function originStatusText(t: Translate, status: string, lastPullAt: number | null): string {
   if (status === "pulling") return t("origin.pulling");
@@ -42,25 +42,29 @@ const CHART_MODE_LABEL_KEYS = ["chart.bar", "chart.line"] as const;
 
 export function UsageScreen(props: PluginScreenProps) {
   const { theme, layout } = props;
-  const [range, setRange] = useState<UsageRangeKey>("7d");
+  const [range, setRange] = useState<UsageRangeKey | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [device, setDevice] = useState<string>("aggregate");
   const [tab, setTab] = useState<string>("overview");
   const [chartMode, setChartMode] = useState<ChartMode>("bar");
-  const [granularity, setGranularity] = useState<UsageGranularity>("day");
+  const [granularity, setGranularity] = useState<UsageGranularity | null>(null);
   const [customFrom, setCustomFrom] = useState<string>("");
   const [customTo, setCustomTo] = useState<string>("");
   const [showNotes, setShowNotes] = useState(true);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const updateQuery = useUpdateCheck();
+  const prefsQuery = usePrefs(detectSystemLocale());
   const deviceOrigin = device === "aggregate" ? undefined : device;
+  const effectiveRange = range ?? prefsQuery.data?.defaultRange ?? "7d";
+  const effectiveGranularity = granularity ?? prefsQuery.data?.defaultGranularity ?? "day";
   const customPayload = useMemo(() => {
-    if (range !== "custom" || !customFrom || !customTo) return undefined;
+    if (effectiveRange !== "custom" || !customFrom || !customTo) return undefined;
     return { from: customFrom, to: customTo };
-  }, [range, customFrom, customTo]);
-  const query = useUsageReport(range, deviceOrigin, customPayload, granularity);
+  }, [effectiveRange, customFrom, customTo]);
+  const query = useUsageReport(effectiveRange, deviceOrigin, customPayload, effectiveGranularity);
   const refresh = useRefreshUsage();
   const { t } = useI18n();
+  const localLabel = prefsQuery.data?.localAlias || t("origin.local");
   const ranges = useMemo(() => RANGE_KEYS.map((key, index) => ({ key, label: t(RANGE_LABEL_KEYS[index]) })), [t]);
   const chartModes = useMemo(() => CHART_MODE_KEYS.map((key, index) => ({ key, label: t(CHART_MODE_LABEL_KEYS[index]) })), [t]);
   const granularities = useMemo(
@@ -149,10 +153,10 @@ export function UsageScreen(props: PluginScreenProps) {
   const deviceTabs = useMemo(() => {
     const list: Array<{ id: string; label: string }> = [{ id: "aggregate", label: t("origin.aggregate") }];
     for (const origin of data?.origins ?? []) {
-      list.push({ id: origin.id, label: origin.id === "local" ? t("origin.local") : origin.label });
+      list.push({ id: origin.id, label: origin.id === "local" ? localLabel : origin.label });
     }
     return list;
-  }, [data?.origins, t]);
+  }, [data?.origins, t, localLabel]);
   const hasDevice = device === "aggregate" || (data?.origins ?? []).some((origin) => origin.id === device);
   const activeDevice = hasDevice ? device : "aggregate";
   const selectedOrigin = (data?.origins ?? []).find((origin) => origin.id === activeDevice) ?? null;
@@ -251,7 +255,7 @@ export function UsageScreen(props: PluginScreenProps) {
 
         <View style={styles.pillRow}>
           {ranges.map((item) => {
-            const active = item.key === range;
+            const active = item.key === effectiveRange;
             return (
               <Pressable
                 key={item.key}
@@ -271,7 +275,7 @@ export function UsageScreen(props: PluginScreenProps) {
           })}
         </View>
 
-        {range === "custom" ? (
+        {effectiveRange === "custom" ? (
           <DateRangePicker
             theme={theme}
             compact={compact}
@@ -313,7 +317,7 @@ export function UsageScreen(props: PluginScreenProps) {
         ) : null}
 
         {activeTab !== "overview" ? (
-          <AgentTab agent={activeTab} range={range} origin={deviceOrigin} custom={customPayload} granularity={granularity} onGranularity={setGranularity} theme={theme} compact={compact} chartMode={chartMode} />
+          <AgentTab agent={activeTab} range={effectiveRange} origin={deviceOrigin} custom={customPayload} granularity={effectiveGranularity} onGranularity={setGranularity} theme={theme} compact={compact} chartMode={chartMode} localAlias={prefsQuery.data?.localAlias} />
         ) : hasData ? (
           <>
             <View style={styles.cardRow}>
@@ -330,7 +334,7 @@ export function UsageScreen(props: PluginScreenProps) {
                 <Text style={styles.sectionTitle}>{t("section.trend")}</Text>
                 <View style={styles.modeRow}>
                   {granularities.map((item) => {
-                    const active = granularity === item.key;
+                    const active = effectiveGranularity === item.key;
                     return (
                       <Pressable
                         key={item.key}

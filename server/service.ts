@@ -53,6 +53,9 @@ function defaultPrefs(): UsagePrefs {
   return { language: "auto", refreshMinutes: 30 };
 }
 
+const RANGE_VALUES = new Set(["24h", "today", "7d", "30d", "12w", "12m", "custom"]);
+const GRANULARITY_VALUES = new Set(["hour", "day", "week", "month"]);
+
 function sanitizePrefs(raw: unknown): UsagePrefs {
   const next = defaultPrefs();
   if (raw && typeof raw === "object") {
@@ -61,6 +64,16 @@ function sanitizePrefs(raw: unknown): UsagePrefs {
     if (typeof record.refreshMinutes === "number" && Number.isFinite(record.refreshMinutes)) {
       const minutes = Math.round(record.refreshMinutes);
       if (minutes >= 0 && minutes <= 1440) next.refreshMinutes = minutes;
+    }
+    if (typeof record.localAlias === "string") {
+      const alias = record.localAlias.trim().slice(0, 40);
+      if (alias) next.localAlias = alias;
+    }
+    if (typeof record.defaultRange === "string" && RANGE_VALUES.has(record.defaultRange)) {
+      next.defaultRange = record.defaultRange as UsageRangeKey;
+    }
+    if (typeof record.defaultGranularity === "string" && GRANULARITY_VALUES.has(record.defaultGranularity)) {
+      next.defaultGranularity = record.defaultGranularity as UsageGranularity;
     }
   }
   return next;

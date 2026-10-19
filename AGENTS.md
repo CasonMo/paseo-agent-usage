@@ -86,4 +86,6 @@ Checklist before pushing:
 - README, OVERVIEW, and the manifest are updated together (see above).
 - Bump `package.json` and `shared/version.ts` together; the update check compares the
   registry pin against `shared/version.ts`.
-- Ship a refreshed desensitized screenshot for visual changes.
+- Screenshots are supplied by the author, never captured or committed by agents. Do not
+  generate, capture, or replace images under `assets/`; ask the author to provide the
+  desensitized screenshot instead.

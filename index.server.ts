@@ -14,7 +14,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(usageAgentsGetRpc, () => service.agentsGet());
   server.handle(usageAgentsSetRpc, (input) => service.agentsSet(input.agents));
   server.handle(usagePrefsGetRpc, (input) => service.prefsGet(input.locale));
-  server.handle(usagePrefsSetRpc, (input) => service.prefsSet({ language: input.language, refreshMinutes: input.refreshMinutes }));
+  server.handle(usagePrefsSetRpc, (input) => service.prefsSet(input));
   server.handle(usageUpdateCheckRpc, () => checkForUpdate());
   const offTurnEnded = server.on("agent.turn_ended", () => {
     service.markDirty();

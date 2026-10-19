@@ -51,3 +51,59 @@
 - 网络：插件自身的网络访问只有版本更新检查（每小时最多一次，仅读取公开的 registry 记录与对应提交的 package.json，来自 raw.githubusercontent.com、api.github.com，不发送任何数据）；SSH 采集通过系统 ssh 命令连接你配置的主机
 - 不读取、不保存、不发送任何登录凭据；不发送 prompts、代码或日志内容到任何服务
 - 支持 macOS 与 Linux；需要 Paseo 0.11.2 或更高版本
+
+---
+
+# Agent Usage (English)
+
+View local usage statistics for coding agents inside Paseo.
+
+Data sources (read locally on the daemon host; remote machines are collected over SSH, see below):
+
+- Claude Code: `~/.claude/projects` (including subagents)
+- Codex: `~/.codex/sessions` and `~/.codex/archived_sessions`
+- OpenCode: `~/.local/share/opencode/opencode.db` (read-only via node:sqlite; reasoning tokens count as output, matching the billing basis)
+- Pi: `~/.pi/agent/sessions` (including forks and sub-session directories; messages are deduplicated across files, so copied fork segments are not counted twice)
+
+Interface: the "Usage" row at the bottom of the sidebar shows today's tokens; clicking it opens a full-screen page with ranges (last 24 hours / today / last 7 days / last 30 days / last 12 weeks / last 12 months / custom range picked on a calendar), and the trend chart switches between hour / day / week / month aggregation (day by default; range and granularity are independent).
+
+- Two-level tabs at the top: (1) device switching (aggregate / local / each remote, with "aggregate" first) and (2) agent tabs (overview + sessions + Claude Code / Codex / OpenCode / Pi); the "Settings" entry sits to the right of the refresh button at the top right (agent toggles and SSH host management)
+- Overview: total cards, trend chart (bar or line, four-segment granularity switch), breakdowns by agent / model / project; a "counting basis and known differences" note at the bottom explains the comparison with proxy tools such as CC Switch (including why some figures cannot be aligned)
+- Chart interaction: hover (or tap) the chart to see that period's usage detail (total tokens split by agent); the tooltip shows the full period label (for example `2026-08-15 14:00`)
+- Agent tab: summary cards, trend chart (sharing the hour/day/week/month switch with the overview), model breakdown, project breakdown, session breakdown, and request log. Sessions are aggregated by session ID and sorted by start time: each row shows the first user message as the title (some injected text is skipped; otherwise the first 8 characters of the session ID), project, request count, tokens, input/output/cache split, and duration, 20 per page; the count covers every session of that agent in the range while the list shows the latest 200, and a session belongs to the range its first request falls into. The request log (time, model, project, session, input/output/cache tokens) keeps only the most recent ~400 calls per agent; both the session list and the request log paginate 20 rows per page
+
+Refresh: the first scan reads the full history (about 30 seconds locally, with progress shown on the page), after which files refresh incrementally (about 1-2 seconds); a debounced incremental refresh triggers automatically when an agent turn ends. After a plugin upgrade (from v0.3.0, statistics are cached per hour and per session) one full rescan runs. The session index keeps at most the 8,000 most recent sessions (older ones are evicted by last activity time).
+
+Settings (the "Settings" entry at the top right of the usage page, or Paseo Settings → Plugins):
+
+- **General**: interface language (follow system / Chinese / English, auto-detected) and **auto refresh** (off / 5 min / 15 min / **30 min (default)** / 1 hour / 6 hours / 24 hours; periodically scans local logs and syncs remote hosts); you can also set a custom **local device label** (the display name used instead of the default "本机 / Local" in the device tabs and request log; leave empty to restore the default, stored only in the local preference file), and a **default range and trend granularity** (the initial range/granularity when the usage page opens, such as "today + hour" or "last 7 days + month"; unset means last 7 days + day)
+- **Agent toggles**: disabled agents are neither shown nor fetched
+- **Remote hosts (SSH)**: add, edit, delete, and test connections
+
+## Remote statistics (SSH)
+
+Usage from other machines can be counted in as well. Two ways to configure it:
+
+1. **Visual configuration (recommended)**: the "Settings" entry at the top right of the usage page, or **Paseo Settings → Plugins → Agent Usage**, to add, edit, delete SSH hosts and test connections; new or changed hosts are fetched automatically after saving
+2. Edit `hosts.json` in the plugin data directory manually (`~/.paseo/plugin-data/agent-usage-plugin/hosts.json`):
+
+```json
+[
+  { "name": "dev1", "target": "dev1" },
+  { "name": "srv2", "target": "user@10.0.0.2", "passwordCommand": "security find-generic-password -s agent-usage-ssh-srv2 -w" }
+]
+```
+
+- `target`: an alias from `~/.ssh/config` or `user@host`; authentication uses SSH keys by default, and account passwords are also supported via the `password` field (plaintext, mind file permissions) or the safer `passwordCommand` (fetches the password from the keychain or a password manager)
+- Optional fields: `port`, `identityFile`, `nodePath` (remote node path), `cacheDir` (remote incremental cache directory), `timeoutMs`, `enabled`
+- Remote requirements: no extra software to install; the plugin auto-detects a JS runtime (common locations under PATH / nvm / volta / fnm / asdf / homebrew, and tries to load `~/.nvm/nvm.sh`); fill `nodePath` only when detection fails. The SQLite source needs Node >= 22.5, otherwise it is skipped; the first fetch is full, later ones incremental
+- Security: the plugin never reads or decrypts any remote credentials; remote logs are read-only and only a small incremental cache is written (`~/.cache/agent-usage-plugin`)
+- Interface: the "Device" tabs at the top switch between aggregate and single-machine views (sync status per machine shows below the tabs); request log rows carry a device source label
+
+## Data and permissions
+
+- Reads: local session logs on this machine (and on each remote host)
+- Writes: the plugin data directory on the daemon host (scan state and host configuration); on remotes only the incremental cache
+- Network: the plugin's own network access is only the update check (at most once an hour, reading only the public registry record and the pinned package.json from raw.githubusercontent.com and api.github.com, sending no data); SSH collection connects to your configured hosts through the system ssh command
+- No login credentials are read, stored, or sent; no prompts, code, or log content is sent to any service
+- Supports macOS and Linux; requires Paseo 0.11.2 or later

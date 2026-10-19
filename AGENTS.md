@@ -45,7 +45,10 @@ Paseo plugin requirements we must follow when developing, reviewing, and releasi
   account handles, project names, workspace paths, tokens, or customer data in code,
   comments, docs, fixtures, examples, screenshots, or commit messages.
 - Use obvious placeholders such as `<host>`, `user@example.com`, `acme-project`, `12345678`.
-- Screenshots and media must be captured against fake data before they are committed.
+- Screenshots and media: agents must never capture, generate, edit, replace, or push
+  images themselves. Only screenshots supplied by the author may be committed, and only
+  after the author confirms they are desensitized. Never push an image change the author
+  did not provide.
 
 ## Code safety
 

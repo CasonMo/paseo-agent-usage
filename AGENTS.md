@@ -70,13 +70,24 @@ The registry at https://github.com/getpaseo/plugins pins one exact commit of thi
 repository, and that pinned artifact is what users install.
 
 1. Push the finished change to `main` after the checklist below passes.
-2. Request the update in the registry: open a submission issue (title = the plugin
-   name, Source = this repository) naming the desired commit, or propose the new
-   commit directly in the existing record with a hand-edited pull request. Git
-   updates are manual; nothing is bumped automatically.
-3. The reviewer verifies the pinned commit, runs the trusted registry validation,
-   and merges. Approved listings appear on paseo.sh/plugins; no tag is required.
-4. After merge, confirm the listing installs the new pin.
+2. Request the update in the registry by opening a submission issue first — always
+   the issue, never a direct PR: agents cannot label or merge there.
+   - Use the issue template (`.github/ISSUE_TEMPLATE/submit-plugin.yml`) at
+     https://github.com/getpaseo/plugins/issues/new/choose. Title: `Update
+     Agent Usage to <version>`. Fill the form's Source field (this repository
+     URL, optionally `/tree/<commit>`) and tick the Categories checkboxes;
+     URL body-prefill does not populate a form template's fields.
+   - If the template 404s, fall back to a bare issue whose body contains the
+     two `###` sections (`### Source` / `### Categories` checkboxes) copied
+     from the template, and ask a maintainer for the `submission` label.
+   - The intake bot (`scripts/submit.ts`, cron hourly at :07/:37) turns a
+     labeled issue into a `submit/issue-<N>` review PR titled
+     `Review <issue title>`; do not hand-edit that branch.
+3. The reviewer verifies the pinned commit, runs the trusted registry
+   validation, and merges. Approved listings appear on paseo.sh/plugins; no
+   tag is required.
+4. After merge, confirm the listing installs the new pin
+   (`plugins/casonmo/agent-usage.json` on the registry's `main`).
 
 Checklist before pushing:
 

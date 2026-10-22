@@ -12,7 +12,7 @@ var import_node_path3 = require("path");
 // server/scan/state.ts
 var import_promises = require("fs/promises");
 var import_node_path = require("path");
-var STATE_VERSION = 11;
+var STATE_VERSION = 12;
 var SESSION_KEEP_LIMIT = 8e3;
 function pruneSessions(sessions) {
   for (const key of Object.keys(sessions)) {
@@ -45,6 +45,7 @@ function applySession(sessions, harness, sid, delta) {
   entry.cost += delta.cost ?? 0;
   entry.credits += delta.credits ?? 0;
   if (delta.p) entry.p = delta.p;
+  if (delta.title && !entry.title) entry.title = delta.title;
   if (typeof delta.t === "number" && Number.isFinite(delta.t)) {
     if (delta.t < entry.s) entry.s = delta.t;
     if (delta.t > entry.e) entry.e = delta.t;
@@ -106,7 +107,7 @@ function recordCall(state, harness, record, replaceId) {
   if (list.length > MAX_RECENT_PER_AGENT) list.splice(0, list.length - MAX_RECENT_PER_AGENT);
 }
 async function loadState(dir) {
-  var _a, _b, _c, _d;
+  var _a, _b, _c, _d, _e, _f;
   try {
     const text = await (0, import_promises.readFile)((0, import_node_path.join)(dir, "state.json"), "utf8");
     const parsed = JSON.parse(text);
@@ -116,12 +117,16 @@ async function loadState(dir) {
     state.sessions = parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {};
     state.files = parsed.files ?? {};
     state.recent = parsed.recent ?? {};
-    state.opencode = { watermark: typeof ((_a = parsed.opencode) == null ? void 0 : _a.watermark) === "number" ? parsed.opencode.watermark : 0 };
-    state.pi = { seen: Array.isArray((_b = parsed.pi) == null ? void 0 : _b.seen) ? parsed.pi.seen.filter((k) => typeof k === "string") : [] };
+    state.opencode = {
+      watermark: typeof ((_a = parsed.opencode) == null ? void 0 : _a.watermark) === "number" ? parsed.opencode.watermark : 0,
+      legacyWatermark: typeof ((_b = parsed.opencode) == null ? void 0 : _b.legacyWatermark) === "number" ? parsed.opencode.legacyWatermark : void 0,
+      seen: Array.isArray((_c = parsed.opencode) == null ? void 0 : _c.seen) ? parsed.opencode.seen.filter((id) => typeof id === "string") : void 0
+    };
+    state.pi = { seen: Array.isArray((_d = parsed.pi) == null ? void 0 : _d.seen) ? parsed.pi.seen.filter((k) => typeof k === "string") : [] };
     state.hosts = parsed.hosts ?? {};
     state.meta = {
-      lastScanAt: typeof ((_c = parsed.meta) == null ? void 0 : _c.lastScanAt) === "number" ? parsed.meta.lastScanAt : null,
-      scanError: typeof ((_d = parsed.meta) == null ? void 0 : _d.scanError) === "string" ? parsed.meta.scanError : null
+      lastScanAt: typeof ((_e = parsed.meta) == null ? void 0 : _e.lastScanAt) === "number" ? parsed.meta.lastScanAt : null,
+      scanError: typeof ((_f = parsed.meta) == null ? void 0 : _f.scanError) === "string" ? parsed.meta.scanError : null
     };
     return state;
   } catch {
@@ -146,6 +151,25 @@ var import_promises2 = require("fs/promises");
 var import_node_path2 = require("path");
 function num(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+function clipTitle(text) {
+  if (typeof text !== "string") return "";
+  const clean = text.replace(/\\s+/g, " ").trim();
+  if (!clean) return "";
+  const chars = [...clean];
+  return chars.length > 60 ? \`\${chars.slice(0, 60).join("")}\\u2026\` : clean;
+}
+var MACHINE_LABEL = /^(# AGENTS\\.md|<environment_context|<user_instructions|<permissions|<chat-history-summary|<paseo-system|<paseo-agent|this session is being continued|caveat: the messages below)/i;
+function firstMessageText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  for (const block of content) {
+    if (block && typeof block === "object" && typeof block.text === "string") {
+      const kind = block.type;
+      if (kind === "text" || kind === "input_text") return block.text;
+    }
+  }
+  return "";
 }
 function localDateKey(ms) {
   const date = new Date(ms);
@@ -219,11 +243,25 @@ function claudeRoots(env = process.env) {
 async function scanClaudeFile(state, path) {
   const previousState = state.files[path];
   const recent = /* @__PURE__ */ new Map();
+  let sessionTitle = (previousState == null ? void 0 : previousState.sessionTitle) ?? "";
   if (previousState == null ? void 0 : previousState.recent) {
     for (const contribution of previousState.recent) recent.set(contribution.id, contribution);
   }
   const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
-    var _a;
+    var _a, _b;
+    if (!line.includes('"sessionId"')) return;
+    if (line.includes('"type":"user"')) {
+      try {
+        const entry2 = JSON.parse(line);
+        if ((entry2 == null ? void 0 : entry2.type) === "user") {
+          const raw = firstMessageText((_a = entry2.message) == null ? void 0 : _a.content);
+          const text = raw && !MACHINE_LABEL.test(raw.trim()) ? clipTitle(raw) : "";
+          if (text && !sessionTitle) sessionTitle = text;
+          return;
+        }
+      } catch {
+      }
+    }
     if (!line.includes('"usage"') || !line.includes('"assistant"')) return;
     let entry;
     try {
@@ -249,7 +287,7 @@ async function scanClaudeFile(state, path) {
       o: num(usage.output_tokens),
       cr: num(usage.cache_read_input_tokens),
       cw: num(usage.cache_creation_input_tokens),
-      rz: num((_a = usage.output_tokens_details) == null ? void 0 : _a.thinking_tokens)
+      rz: num((_b = usage.output_tokens_details) == null ? void 0 : _b.thinking_tokens)
     };
     if (id && recent.has(id)) {
       const before = recent.get(id);
@@ -293,7 +331,8 @@ async function scanClaudeFile(state, path) {
       o: contribution.o,
       cr: contribution.cr,
       cw: contribution.cw,
-      rz: contribution.rz
+      rz: contribution.rz,
+      title: sessionTitle || void 0
     });
     recordCall(
       state,
@@ -317,6 +356,7 @@ async function scanClaudeFile(state, path) {
   });
   if (!result) return;
   const fileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs };
+  if (sessionTitle) fileState.sessionTitle = sessionTitle;
   if (recent.size > 0) fileState.recent = [...recent.values()].slice(-96);
   state.files[path] = fileState;
 }
@@ -336,10 +376,28 @@ async function scanCodexFile(state, path) {
   let project = (previousState == null ? void 0 : previousState.project) ?? "";
   let model = (previousState == null ? void 0 : previousState.model) ?? "";
   let session = (previousState == null ? void 0 : previousState.session) ?? "";
+  let title = (previousState == null ? void 0 : previousState.sessionTitle) ?? "";
   let totals = (previousState == null ? void 0 : previousState.totals) ?? null;
   let fork = (previousState == null ? void 0 : previousState.codexFork) ?? { forked: false, point: null, baselineDone: false, firstTs: null };
   const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
     var _a, _b;
+    if (!title && (line.includes('"response_item"') || line.includes('"user_message"'))) {
+      try {
+        const entry2 = JSON.parse(line);
+        const payload = entry2 == null ? void 0 : entry2.payload;
+        if ((payload == null ? void 0 : payload.type) === "user_message") {
+          const text = clipTitle(payload.message);
+          if (text) title = text;
+        } else if ((payload == null ? void 0 : payload.type) === "message" && payload.role === "user") {
+          const text = firstMessageText(payload.content);
+          if (text && !MACHINE_LABEL.test(text)) {
+            const label = clipTitle(text);
+            if (label) title = label;
+          }
+        }
+      } catch {
+      }
+    }
     if (line.includes('"session_meta"')) {
       try {
         const entry2 = JSON.parse(line);
@@ -414,6 +472,7 @@ async function scanCodexFile(state, path) {
               t: ts,
               r: 1,
               p: project,
+              title: title || void 0,
               i: input2,
               o: lOutput,
               cr: lCached,
@@ -474,6 +533,7 @@ async function scanCodexFile(state, path) {
       t: ts,
       r: 1,
       p: project,
+      title: title || void 0,
       i: input,
       o: dOutput,
       cr: dCached,
@@ -496,6 +556,7 @@ async function scanCodexFile(state, path) {
   });
   if (!result) return;
   const fileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, model, session };
+  if (title) fileState.sessionTitle = title;
   if (totals) fileState.totals = totals;
   if (fork.forked) fileState.codexFork = fork;
   state.files[path] = fileState;
@@ -507,6 +568,10 @@ var import_node_module = require("module");
 var import_node_os3 = require("os");
 var import_node_path5 = require("path");
 var OPENCODE = "opencode";
+var SEEN_LIMIT = 1e4;
+var INCOMPLETE_GRACE_MS = 60 * 60 * 1e3;
+var BATCH_SIZE = 4e3;
+var MAX_BATCHES = 500;
 var sqliteModule;
 async function loadSqlite() {
   if (sqliteModule !== void 0) return sqliteModule;
@@ -523,9 +588,130 @@ function opencodeDbPath(env = process.env) {
   const dataHome = ((_a = env.XDG_DATA_HOME) == null ? void 0 : _a.trim()) || (0, import_node_path5.join)((0, import_node_os3.homedir)(), ".local", "share");
   return (0, import_node_path5.join)(dataHome, "opencode", "opencode.db");
 }
-async function scanOpencode(state) {
+function hasTable(db, name) {
+  try {
+    return db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1").all(name).length > 0;
+  } catch {
+    return false;
+  }
+}
+function parseData(value) {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function modelId(data, fallback) {
+  const direct = data.modelID;
+  if (typeof direct === "string" && direct) return direct;
+  const model = data.model;
+  if (typeof model === "string" && model) return model;
+  if (model && typeof model === "object") {
+    if (typeof model.id === "string" && model.id) return model.id;
+    if (typeof model.modelID === "string" && model.modelID) return model.modelID;
+    if (typeof model.providerID === "string" && model.providerID) return model.providerID;
+  }
+  if (typeof fallback === "string" && fallback) {
+    try {
+      const parsed = JSON.parse(fallback);
+      if (parsed && typeof parsed === "object" && typeof parsed.id === "string" && parsed.id) return parsed.id;
+    } catch {
+    }
+  }
+  return "unknown";
+}
+function projectPath(data, ...fallbacks) {
+  const path = data.path;
+  if (path && typeof path === "object") {
+    if (typeof path.cwd === "string" && path.cwd) return path.cwd;
+    if (typeof path.root === "string" && path.root) return path.root;
+  }
+  for (const value of fallbacks) if (typeof value === "string" && value) return value;
+  return "";
+}
+function parseCall(row, data, v2, now) {
   var _a, _b;
-  const path = opencodeDbPath();
+  if (!v2 && data.role !== "assistant") return null;
+  const tokens = data.tokens;
+  if (!tokens || typeof tokens !== "object") return null;
+  const cache = tokens.cache && typeof tokens.cache === "object" ? tokens.cache : {};
+  const input = num(tokens.input);
+  const output = num(tokens.output);
+  const reasoning = num(tokens.reasoning);
+  const cacheRead = num(cache.read);
+  const cacheWrite = num(cache.write);
+  const cost = Math.max(0, num(data.cost));
+  const hasUsage = input + output + reasoning + cacheRead + cacheWrite > 0 || cost > 0;
+  const isCompaction = v2 && row.message_type === "compaction";
+  const completedAt = num((_a = data.time) == null ? void 0 : _a.completed);
+  const status = typeof data.status === "string" ? data.status : "";
+  const terminalStatus = status === "completed" || status === "failed";
+  const stale = num(row.time_updated) > 0 && now - num(row.time_updated) > INCOMPLETE_GRACE_MS;
+  const complete = (isCompaction ? terminalStatus : completedAt > 0) || stale && hasUsage;
+  return {
+    id: typeof row.id === "string" ? row.id : "",
+    ts: num((_b = data.time) == null ? void 0 : _b.created) || num(row.time_created),
+    session: typeof row.session_id === "string" ? row.session_id : "",
+    model: modelId(data),
+    project: projectPath(data),
+    input,
+    output,
+    reasoning,
+    cacheRead,
+    cacheWrite,
+    cost,
+    complete
+  };
+}
+function countCall(state, call, seen, seenOrder) {
+  if (!call.complete) return;
+  if (call.id && seen.has(call.id)) return;
+  const total = call.input + call.output + call.reasoning + call.cacheRead + call.cacheWrite;
+  if (total <= 0 && call.cost <= 0) return;
+  const outputWithReasoning = call.output + call.reasoning;
+  addBucket(state.buckets, localHourKey(call.ts), OPENCODE, call.model, call.project, {
+    r: 1,
+    i: call.input,
+    o: outputWithReasoning,
+    cr: call.cacheRead,
+    cw: call.cacheWrite,
+    rz: call.reasoning,
+    cost: call.cost
+  });
+  applySession(state.sessions, OPENCODE, call.session, {
+    t: call.ts,
+    r: 1,
+    p: call.project,
+    i: call.input,
+    o: outputWithReasoning,
+    cr: call.cacheRead,
+    cw: call.cacheWrite,
+    rz: call.reasoning,
+    cost: call.cost,
+    title: call.title
+  });
+  recordCall(state, OPENCODE, {
+    t: call.ts,
+    m: call.model,
+    p: call.project,
+    s: call.session,
+    i: call.input,
+    o: outputWithReasoning,
+    cr: call.cacheRead,
+    cw: call.cacheWrite,
+    rz: call.reasoning,
+    cost: call.cost,
+    credits: 0
+  });
+  if (call.id) {
+    seen.add(call.id);
+    seenOrder.push(call.id);
+  }
+}
+async function scanOpencode(state, path = opencodeDbPath()) {
   if (!(0, import_node_fs.existsSync)(path)) return;
   const sqlite = await loadSqlite();
   if (!sqlite) {
@@ -540,73 +726,118 @@ async function scanOpencode(state) {
       db = new sqlite.DatabaseSync(path);
       db.exec("PRAGMA query_only = ON;");
     }
+    const hasV2Messages = hasTable(db, "session_message");
+    const hasV2Sessions = hasTable(db, "session_v2");
+    const hasV1Messages = hasTable(db, "message");
+    const hasV1Sessions = hasTable(db, "session");
+    if (!hasV2Messages && !hasV1Messages) return;
+    const seen = new Set(state.opencode.seen ?? []);
+    const seenOrder = [...state.opencode.seen ?? []];
+    const now = Date.now();
     let watermark = state.opencode.watermark;
-    const statement = db.prepare(
-      "SELECT id, session_id, time_created, time_updated, data FROM message WHERE time_updated > ? ORDER BY time_updated ASC LIMIT 4000"
-    );
-    for (let batch = 0; batch < 500; batch += 1) {
-      const rows = statement.all(watermark);
-      if (rows.length === 0) break;
-      for (const row of rows) {
-        const updated = num(row.time_updated);
-        if (updated > watermark) watermark = updated;
-        let data;
+    let legacyWatermark = state.opencode.legacyWatermark ?? state.opencode.watermark;
+    let holdWatermark = null;
+    let holdLegacy = null;
+    if (hasV1Messages) {
+      const titles = /* @__PURE__ */ new Map();
+      if (hasV1Sessions) {
         try {
-          data = JSON.parse(row.data);
+          const titleStatement = db.prepare("SELECT id, title FROM session WHERE title IS NOT NULL AND title <> ''");
+          for (const row of titleStatement.all()) {
+            if (typeof row.id === "string" && typeof row.title === "string") titles.set(row.id, clipTitle(row.title));
+          }
         } catch {
-          continue;
         }
-        if ((data == null ? void 0 : data.role) !== "assistant") continue;
-        const tokens = data.tokens ?? {};
-        const cache = tokens.cache ?? {};
-        const input = num(tokens.input);
-        const output = num(tokens.output);
-        const reasoning = num(tokens.reasoning);
-        const cacheRead = num(cache.read);
-        const cacheWrite = num(cache.write);
-        const cost = typeof data.cost === "number" && data.cost > 0 ? data.cost : 0;
-        if (input + output + reasoning + cacheRead + cacheWrite <= 0 && cost <= 0) continue;
-        const ts = num((_a = data.time) == null ? void 0 : _a.created) || num(row.time_created);
-        const model = typeof data.modelID === "string" && data.modelID ? data.modelID : "unknown";
-        const project = typeof ((_b = data.path) == null ? void 0 : _b.cwd) === "string" ? data.path.cwd : "";
-        const outputWithReasoning = output + reasoning;
-        addBucket(state.buckets, localHourKey(ts), OPENCODE, model, project, {
-          r: 1,
-          i: input,
-          o: outputWithReasoning,
-          cr: cacheRead,
-          cw: cacheWrite,
-          rz: reasoning,
-          cost
-        });
-        applySession(state.sessions, OPENCODE, typeof row.session_id === "string" ? row.session_id : "", {
-          t: ts,
-          r: 1,
-          p: project,
-          i: input,
-          o: outputWithReasoning,
-          cr: cacheRead,
-          cw: cacheWrite,
-          rz: reasoning,
-          cost
-        });
-        recordCall(state, OPENCODE, {
-          t: ts,
-          m: model,
-          p: project,
-          s: typeof row.session_id === "string" ? row.session_id : "",
-          i: input,
-          o: outputWithReasoning,
-          cr: cacheRead,
-          cw: cacheWrite,
-          rz: reasoning,
-          cost,
-          credits: 0
-        });
       }
-      if (rows.length < 4e3) break;
+      let cursor = hasV2Messages ? legacyWatermark : watermark;
+      const statement = db.prepare(
+        \`SELECT id, session_id, time_created, time_updated, data FROM message
+         WHERE time_updated > ? ORDER BY time_updated ASC LIMIT \${BATCH_SIZE}\`
+      );
+      for (let batch = 0; batch < MAX_BATCHES; batch += 1) {
+        const rows = statement.all(cursor);
+        if (rows.length === 0) break;
+        let maxUpdated = cursor;
+        for (const row of rows) {
+          const updated = num(row.time_updated);
+          if (updated > maxUpdated) maxUpdated = updated;
+          const data = parseData(row.data);
+          if (!data) continue;
+          const call = parseCall(row, data, false, now);
+          if (!call) continue;
+          if (!call.complete) {
+            if (updated > 0 && (call.input + call.output + call.reasoning + call.cacheRead + call.cacheWrite > 0 || call.cost > 0)) {
+              if (holdLegacy === null || updated < holdLegacy) holdLegacy = updated;
+            }
+            continue;
+          }
+          call.title = titles.get(call.session);
+          countCall(state, call, seen, seenOrder);
+        }
+        cursor = maxUpdated;
+        if (rows.length < BATCH_SIZE) break;
+      }
+      if (hasV2Messages) legacyWatermark = Math.max(legacyWatermark, cursor);
+      else {
+        watermark = Math.max(watermark, cursor);
+        legacyWatermark = watermark;
+      }
     }
+    if (hasV2Messages) {
+      let cursor = watermark;
+      const modelCache = /* @__PURE__ */ new Map();
+      const statement = db.prepare(
+        hasV2Sessions ? \`SELECT m.id, m.session_id, m.time_created, m.time_updated, m.data, m.type AS message_type,
+                    s.title AS session_title, s.directory AS session_directory,
+                    s.model AS session_model, p.worktree AS project_worktree
+             FROM session_message m
+             LEFT JOIN session_v2 s ON s.id = m.session_id
+             LEFT JOIN project p ON p.id = s.project_id
+             WHERE m.time_updated > ? AND m.type IN ('assistant', 'compaction')
+             ORDER BY m.time_updated ASC LIMIT \${BATCH_SIZE}\` : \`SELECT m.id, m.session_id, m.time_created, m.time_updated, m.data, m.type AS message_type
+             FROM session_message m
+             WHERE m.time_updated > ? AND m.type IN ('assistant', 'compaction')
+             ORDER BY m.time_updated ASC LIMIT \${BATCH_SIZE}\`
+      );
+      for (let batch = 0; batch < MAX_BATCHES; batch += 1) {
+        const rows = statement.all(cursor);
+        if (rows.length === 0) break;
+        let maxUpdated = cursor;
+        for (const row of rows) {
+          const updated = num(row.time_updated);
+          if (updated > maxUpdated) maxUpdated = updated;
+          const data = parseData(row.data);
+          if (!data) continue;
+          const call = parseCall(row, data, true, now);
+          if (!call) continue;
+          if (!call.complete) {
+            if (updated > 0 && (call.input + call.output + call.reasoning + call.cacheRead + call.cacheWrite > 0 || call.cost > 0)) {
+              if (holdWatermark === null || updated < holdWatermark) holdWatermark = updated;
+            }
+            continue;
+          }
+          if (row.session_title) call.title = clipTitle(row.session_title);
+          call.project = projectPath(data, row.session_directory, row.project_worktree);
+          if (call.model === "unknown") {
+            if (!modelCache.has(call.session)) modelCache.set(call.session, modelId({}, row.session_model));
+            call.model = modelCache.get(call.session) || "unknown";
+          }
+          countCall(state, call, seen, seenOrder);
+        }
+        cursor = maxUpdated;
+        if (rows.length < BATCH_SIZE) break;
+      }
+      watermark = Math.max(watermark, cursor);
+    }
+    if (holdWatermark !== null) watermark = Math.min(watermark, Math.max(0, holdWatermark - 1));
+    if (holdLegacy !== null) {
+      if (hasV2Messages) legacyWatermark = Math.min(legacyWatermark, Math.max(0, holdLegacy - 1));
+      else watermark = Math.min(watermark, Math.max(0, holdLegacy - 1));
+    }
+    if (!hasV1Messages) legacyWatermark = watermark;
     state.opencode.watermark = watermark;
+    state.opencode.legacyWatermark = legacyWatermark;
+    state.opencode.seen = seenOrder.length > SEEN_LIMIT ? seenOrder.slice(-SEEN_LIMIT) : seenOrder;
   } finally {
     db == null ? void 0 : db.close();
   }
@@ -630,12 +861,22 @@ function piRoots(env = process.env) {
 async function scanPiFile(state, path) {
   const previousState = state.files[path];
   let project = (previousState == null ? void 0 : previousState.project) ?? "";
+  let title = (previousState == null ? void 0 : previousState.sessionTitle) ?? "";
   const base = path.split("/").pop() ?? "";
   const underscore = base.lastIndexOf("_");
   const session = (underscore >= 0 ? base.slice(underscore + 1) : base).replace(/\\.jsonl$/, "");
   const seen = new Set(state.pi.seen);
   const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
-    var _a;
+    var _a, _b;
+    if (line.includes('"role":"user"')) {
+      try {
+        const entry2 = JSON.parse(line);
+        const raw = (entry2 == null ? void 0 : entry2.type) === "message" && ((_a = entry2.message) == null ? void 0 : _a.role) === "user" ? firstMessageText(entry2.message.content) : "";
+        const text = raw && !MACHINE_LABEL.test(raw.trim()) ? clipTitle(raw) : "";
+        if (text && !title) title = text;
+      } catch {
+      }
+    }
     if (!project && line.includes('"type":"session"')) {
       try {
         const entry2 = JSON.parse(line);
@@ -666,7 +907,7 @@ async function scanPiFile(state, path) {
       seen.add(key);
       state.pi.seen.push(key);
     }
-    const cost = typeof ((_a = usage.cost) == null ? void 0 : _a.total) === "number" && usage.cost.total > 0 ? usage.cost.total : 0;
+    const cost = typeof ((_b = usage.cost) == null ? void 0 : _b.total) === "number" && usage.cost.total > 0 ? usage.cost.total : 0;
     const model = typeof message.model === "string" && message.model ? message.model : "unknown";
     const input = num(usage.input);
     const output = num(usage.output);
@@ -686,6 +927,7 @@ async function scanPiFile(state, path) {
       t: ts,
       r: 1,
       p: project,
+      title: title || void 0,
       i: input,
       o: output,
       cr: cacheRead,
@@ -711,7 +953,7 @@ async function scanPiFile(state, path) {
   if (state.pi.seen.length > PI_SEEN_LIMIT) {
     state.pi.seen = state.pi.seen.slice(-PI_SEEN_LIMIT);
   }
-  state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project };
+  state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, sessionTitle: title || void 0 };
 }
 
 // server/scan/scanner.ts

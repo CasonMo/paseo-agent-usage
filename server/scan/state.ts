@@ -157,6 +157,17 @@ export interface RemoteHostState {
   generatedAt: number | null;
 }
 
+/** OpenCode scan cursor. `watermark` tracks the v2 `session_message` table
+ *  (or the v1 `message` table when no v2 projection exists). `legacyWatermark`
+ *  tracks the frozen v1 table in a database that has both generations.
+ *  `seen` is a bounded ledger of counted message ids, used while a watermark
+ *  is held for an in-flight row and for the v1/v2 overlap during a migration. */
+export interface OpenCodeState {
+  watermark: number;
+  legacyWatermark?: number;
+  seen?: string[];
+}
+
 export interface ScanState {
   version: typeof STATE_VERSION;
   buckets: Record<string, UsageBucket>;
@@ -164,7 +175,7 @@ export interface ScanState {
   sessions: Record<string, SessionEntry>;
   files: Record<string, FileState>;
   recent: Record<string, CallRecord[]>;
-  opencode: { watermark: number };
+  opencode: OpenCodeState;
   /**
    * Pi cross-file dedup ledger: "entryId@timestamp" keys of every counted
    * message. Pi fork / sub-run files copy messages from their parent, so the
@@ -281,7 +292,14 @@ export async function loadState(dir: string): Promise<ScanState> {
       parsed.sessions && typeof parsed.sessions === "object" ? (parsed.sessions as ScanState["sessions"]) : {};
     state.files = (parsed.files as ScanState["files"]) ?? {};
     state.recent = (parsed.recent as ScanState["recent"]) ?? {};
-    state.opencode = { watermark: typeof parsed.opencode?.watermark === "number" ? parsed.opencode.watermark : 0 };
+    state.opencode = {
+      watermark: typeof parsed.opencode?.watermark === "number" ? parsed.opencode.watermark : 0,
+      legacyWatermark:
+        typeof parsed.opencode?.legacyWatermark === "number" ? parsed.opencode.legacyWatermark : undefined,
+      seen: Array.isArray(parsed.opencode?.seen)
+        ? parsed.opencode.seen.filter((id): id is string => typeof id === "string")
+        : undefined,
+    };
     state.pi = { seen: Array.isArray(parsed.pi?.seen) ? (parsed.pi.seen as string[]).filter((k) => typeof k === "string") : [] };
     state.hosts = (parsed.hosts as ScanState["hosts"]) ?? {};
     state.meta = {

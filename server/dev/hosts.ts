@@ -4,8 +4,8 @@ import { applyHostForms, readHostsFile, writeHostsFile } from "../remote/hosts-f
 async function main(): Promise<void> {
   const dir = `/tmp/agent-usage-hosts-test-${Date.now()}`;
   const forms = [
-    { name: "dev1", target: "dev1", enabled: true, port: null, identityFile: "", passwordCommand: "", nodePath: "", cacheDir: "", timeoutMs: null, password: "secret1" },
-    { name: "srv2", target: "user@10.0.0.2", enabled: true, port: 2222, identityFile: "~/.ssh/id_rsa", passwordCommand: "echo pw", nodePath: "/usr/local/bin/node", cacheDir: "", timeoutMs: 30000 },
+    { name: "dev1", target: "dev1", enabled: true, port: null, identityFile: "", passwordCommand: "", nodePath: "", cacheDir: "", timeoutMs: null, password: "<password>" },
+    { name: "srv2", target: "user@example.com", enabled: true, port: 2222, identityFile: "~/.ssh/id_rsa", passwordCommand: "echo pw", nodePath: "/usr/local/bin/node", cacheDir: "", timeoutMs: 30000 },
   ];
   let result = applyHostForms([], forms);
   console.log("apply1 error:", result.error, "| hosts:", JSON.stringify(result.hosts));

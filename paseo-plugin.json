@@ -1,7 +1,7 @@
 {
   "id": "agent-usage-plugin",
   "name": "Agent Usage",
-  "description": "基于本地会话日志统计并展示各 Agent 的用量（Claude Code、Codex、OpenCode、Pi），支持 SSH 远端机器、自定义时间范围、小时/日/周/月趋势粒度与会话级明细 / Token usage statistics for coding agents from their local session logs, with SSH collection from remote machines, custom time ranges, hourly/daily/weekly/monthly trend granularity, and session-level breakdowns",
+  "description": "基于本地会话日志统计并展示各 Agent 的用量（Claude Code、Codex、OpenCode、Pi），支持 SSH 远端机器、6 个预设分析页与自定义看板、卡片的顺序/宽度/隐藏、预算与会话/请求明细 / Token usage statistics for coding agents from their local session logs, with SSH collection, six preset analysis pages, custom dashboards, card layout controls, budgets, and session/request details",
   "media": [
     "assets/screenshot.png"
   ],

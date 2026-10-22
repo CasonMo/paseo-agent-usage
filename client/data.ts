@@ -2,6 +2,8 @@ import { useRpc } from "@getpaseo/plugin/client";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { usageAgentRpc, usageAgentsGetRpc, usageAgentsSetRpc, usagePrefsGetRpc, usagePrefsSetRpc, usageRefreshRpc, usageReportRpc, usageUpdateCheckRpc, type UsageGranularity, type UsageRangeKey } from "../shared/usage";
 
+export const PREFS_QUERY_KEY = ["agent-usage-prefs"] as const;
+
 export interface CustomRange {
   from: string;
   to: string;
@@ -52,7 +54,7 @@ export function useRefreshUsage() {
 export function usePrefs(systemLocale?: "zh" | "en") {
   const call = useRpc(usagePrefsGetRpc);
   return useQuery({
-    queryKey: ["agent-usage-prefs"],
+    queryKey: PREFS_QUERY_KEY,
     queryFn: () => call(systemLocale ? { locale: systemLocale } : {}),
     staleTime: 30_000,
   });

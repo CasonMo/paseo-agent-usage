@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { dashboardConfigSchema } from "../shared/usage";
 import type { UsageAgentReport, UsageAgentSetItem, UsageAgentToggle, UsageGranularity, UsageHostForm, UsageHostListItem, UsagePrefs, UsageRangeKey, UsageReport } from "../shared/usage";
 import { buildAgentReport, buildReport, type HostView } from "./report";
 import { setServerLocale, st } from "./i18n";
@@ -74,6 +75,13 @@ function sanitizePrefs(raw: unknown): UsagePrefs {
     }
     if (typeof record.defaultGranularity === "string" && GRANULARITY_VALUES.has(record.defaultGranularity)) {
       next.defaultGranularity = record.defaultGranularity as UsageGranularity;
+    }
+    if (typeof record.monthlyBudgetUsd === "number" && Number.isFinite(record.monthlyBudgetUsd)) {
+      next.monthlyBudgetUsd = Math.max(0, Math.min(1_000_000_000, record.monthlyBudgetUsd));
+    }
+    if (record.dashboard) {
+      const parsed = dashboardConfigSchema.safeParse(record.dashboard);
+      if (parsed.success) next.dashboard = parsed.data;
     }
   }
   return next;

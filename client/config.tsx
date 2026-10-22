@@ -3,16 +3,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import type { TextStyle, ViewStyle } from "react-native";
 import { Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
-import { useAgentsConfig, usePrefs, useSetAgentsConfig, useSetPrefs } from "./data";
+import { PREFS_QUERY_KEY, useAgentsConfig, usePrefs, useSetAgentsConfig, useSetPrefs } from "./data";
 import { detectSystemLocale, setLanguageMode, useI18n, type LanguageMode } from "./i18n";
-import type { UsageGranularity, UsageRangeKey } from "../shared/usage";
+import type { UsageGranularity, UsagePrefs, UsageRangeKey } from "../shared/usage";
 import { HostsManager } from "./settings";
 
 type Theme = PluginSurfaceProps["theme"];
 
-type UsagePatch = { language: LanguageMode; refreshMinutes: number; localAlias?: string; defaultRange?: UsageRangeKey; defaultGranularity?: UsageGranularity };
-
-const PREFS_QUERY_KEY = ["agent-usage-prefs"];
+type UsagePatch = Partial<Pick<UsagePrefs, "language" | "refreshMinutes" | "localAlias" | "defaultRange" | "defaultGranularity" | "monthlyBudgetUsd">>;
 
 const DEFAULT_RANGE_OPTIONS: UsageRangeKey[] = ["24h", "today", "7d", "30d", "12w", "12m"];
 const DEFAULT_GRANULARITY_OPTIONS: UsageGranularity[] = ["hour", "day", "week", "month"];
@@ -54,10 +52,15 @@ function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) 
 
   const current = prefsQuery.data ?? { language: "auto" as LanguageMode, refreshMinutes: 30, localAlias: undefined };
   const [aliasDraft, setAliasDraft] = useState("");
+  const [budgetDraft, setBudgetDraft] = useState("");
   useEffect(() => {
     setAliasDraft(current.localAlias ?? "");
   }, [current.localAlias]);
+  useEffect(() => {
+    setBudgetDraft(current.monthlyBudgetUsd && current.monthlyBudgetUsd > 0 ? String(current.monthlyBudgetUsd) : "");
+  }, [current.monthlyBudgetUsd]);
   const aliasDirty = aliasDraft.trim() !== (current.localAlias ?? "");
+  const budgetDirty = budgetDraft.trim() !== (current.monthlyBudgetUsd && current.monthlyBudgetUsd > 0 ? String(current.monthlyBudgetUsd) : "");
   const languageOptions: Array<{ value: LanguageMode; label: string }> = [
     { value: "auto", label: t("config.language.system") },
     { value: "zh", label: "中文" },
@@ -76,17 +79,29 @@ function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) 
     [t],
   );
 
-  const save = async (patch: { language?: LanguageMode; refreshMinutes?: number; localAlias?: string; defaultRange?: UsageRangeKey; defaultGranularity?: UsageGranularity }) => {
+  const save = async (patch: UsagePatch) => {
     if (busy) return;
     setBusy(true);
     setMessage(null);
-    const next: UsagePatch = { language: patch.language ?? current.language, refreshMinutes: patch.refreshMinutes ?? current.refreshMinutes };
-    const alias = patch.localAlias ?? current.localAlias;
+    const latest = queryClient.getQueryData<UsagePrefs>(PREFS_QUERY_KEY) ?? prefsQuery.data;
+    if (!latest) {
+      setMessage(t("common.loading"));
+      setBusy(false);
+      return;
+    }
+    const next: UsagePrefs = { ...latest, language: patch.language ?? latest.language, refreshMinutes: patch.refreshMinutes ?? latest.refreshMinutes };
+    const alias = patch.localAlias ?? latest.localAlias;
     if (alias) next.localAlias = alias;
-    const defaultRange = patch.defaultRange ?? current.defaultRange;
+    else delete next.localAlias;
+    const defaultRange = patch.defaultRange ?? latest.defaultRange;
     if (defaultRange) next.defaultRange = defaultRange;
-    const defaultGranularity = patch.defaultGranularity ?? current.defaultGranularity;
+    else delete next.defaultRange;
+    const defaultGranularity = patch.defaultGranularity ?? latest.defaultGranularity;
     if (defaultGranularity) next.defaultGranularity = defaultGranularity;
+    else delete next.defaultGranularity;
+    const budget = patch.monthlyBudgetUsd ?? latest.monthlyBudgetUsd;
+    if (typeof budget === "number" && budget > 0) next.monthlyBudgetUsd = budget;
+    else delete next.monthlyBudgetUsd;
     try {
       const result = await setCall(next);
       if (result.saved) {
@@ -104,6 +119,11 @@ function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) 
 
   const saveAlias = () => {
     void save({ localAlias: aliasDraft.trim() });
+  };
+
+  const saveBudget = () => {
+    const parsed = Number(budgetDraft.trim());
+    void save({ monthlyBudgetUsd: Number.isFinite(parsed) && parsed > 0 ? parsed : 0 });
   };
 
   return (
@@ -163,6 +183,23 @@ function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) 
             );
           })}
         </View>
+      </View>
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>{t("config.budget")}</Text>
+        <Text style={styles.hint}>{t("config.budgetHint")}</Text>
+        <TextInput
+          value={budgetDraft}
+          onChangeText={setBudgetDraft}
+          placeholder={t("config.budgetPlaceholder")}
+          placeholderTextColor={theme.colors.foregroundMuted}
+          keyboardType="decimal-pad"
+          style={styles.input}
+        />
+        {budgetDirty ? (
+          <Pressable accessibilityRole="button" disabled={busy} onPress={saveBudget} style={styles.saveButton}>
+            <Text style={styles.saveButtonText}>{busy ? t("common.saving") : t("common.save")}</Text>
+          </Pressable>
+        ) : null}
       </View>
       <View style={styles.field}>
         <Text style={styles.fieldLabel}>{t("config.localAlias", { default: current.localAlias || t("origin.local") })}</Text>

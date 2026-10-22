@@ -9,18 +9,23 @@
 - OpenCode：`~/.local/share/opencode/opencode.db`（通过 node:sqlite 只读；reasoning token 计入输出，与计费口径一致）
 - Pi：`~/.pi/agent/sessions`（含 forks 与子会话目录；跨文件按消息去重，fork 复制段不重复计）
 
-界面：侧边栏底部「用量」行显示今日 token；点击打开全屏页，支持近24小时 / 今日 / 近 7 天 / 近 30 天 / 近 12 周 / 近 12 月 / 自定义日期范围（日历圈选起止），趋势图可在小时 / 日 / 周 / 月 四种聚合粒度间切换（默认日，范围与粒度相互独立）。
+界面：侧边栏底部「用量」行显示今日 token；点击打开全屏看板。看板包含 6 个预设页（总览、构成、效率、节奏、会话、对比），也支持自定义页面（空白新建或复制当前页，改名、排序、隐藏、删除；自定义页只在聚合视图生效，Agent 页签复用预设页）。每张图表都是卡片，可上移/下移、整行/半宽、隐藏或移除，布局按页面保存在本机偏好里。
 
-- 顶部两层页签：① 设备切换（聚合 / 本机 / 各远端，「聚合」在最前）② Agent 页签（总览 + 会话 + Claude Code / Codex / OpenCode / Pi）；「配置」入口在右上角刷新按钮右侧（含 Agent 统计开关与 SSH 主机管理）
-- 总览：总量卡片、趋势图（可切换柱状图 / 折线图，聚合粒度四段开关）、按 Agent / 模型 / 项目 的明细；底部「统计口径与已知差异」说明与 CC Switch 等代理工具的对比口径（含无法对齐的原因）
-- 图表交互：鼠标悬浮（或点按）图表查看当期用量明细（总 token 与各 Agent 拆分）；悬浮提示显示完整周期标签（如 `2026-08-15 14:00`）
-- Agent 页签：该 Agent 的概况卡片、趋势图（与总览共用小时/日/周/月粒度开关）、模型明细、项目明细、会话明细与请求日志。会话明细按会话（session ID）聚合并按开始时间倒序：显示首条用户消息作为标题（部分注入文本会被跳过，无标题则显示会话 ID 前 8 位）、项目、请求数、token、输入/输出/缓存与时长，每页 20 条分页；会话数覆盖时间范围内该 Agent 的全部会话，列表展示最近 200 个，会话归属按其首次请求时间落入所选范围。请求日志（时间、模型、项目、会话、输入/输出/缓存 token）只保留每个 Agent 最近约 400 条调用，会话列表与请求日志均每页 20 条分页查看
+- 顶部保留设备切换（聚合 / 本机 / 各远端）、Agent 切换（总览 + Claude Code / Codex / OpenCode / Pi）、时间范围与趋势粒度；页面内的页签和卡片负责分析内容
+- 总览：用量脉搏、趋势（全部/非缓存 Token 堆叠、请求、成本、7 日预测）、周期对比、异常日、Agent 份额、主机对比
+- 构成：Token 构成、模型/项目排行与集中度、Agent × 模型、项目 × Agent、矩形占比
+- 效率：缓存命中率、缓存读写、请求均量、输入输出结构、模型效率象限、成本趋势/效率、累计曲线
+- 节奏：年历热力图、星期 × 小时打卡、24 小时画像、星期画像、活跃度与连续天数、时段 × Agent
+- 会话：会话散点、时长/Token 分布、Top 会话、会话泳道、请求大小、近期速率、分页会话明细与请求日志
+- 对比：Agent 雷达、月度预算燃烧率与月末预测、数据覆盖与主机同步状态
+- 图表交互：点按图表查看当期明细；列表默认 Top 5/6，可展开；成本卡只统计有上报的 Agent
+- 会话明细按会话 ID 聚合，单个 Agent 展示最近 200 个；请求日志底层每个 Agent 保留约 400 条、报告最多展示 120 条；两者每页 20 条
 
 刷新机制：首次扫描全量历史日志（本机约 30 秒，其间页面显示扫描进度），之后按文件增量刷新（约 1~2 秒）；Agent 回合结束后会自动触发防抖增量刷新。插件升级后（v0.3.0 起统计数据按小时与会话缓存）会有一次全量重扫。会话索引最多保留 8000 个最近会话（超出按会话末次活动时间淘汰）。
 
 配置（用量页右上角「配置」或 Paseo 设置 → 插件）：
 
-- **通用**：界面语言（跟随系统 / 中文 / English，自动检测系统语言）与**定时刷新**（关闭 / 5 分钟 / 15 分钟 / **30 分钟（默认）** / 1 小时 / 6 小时 / 24 小时；定时自动扫描本地日志并同步远端主机）；还可自定义**本机标签**（设备页签与请求日志里默认「本机」的显示名称，留空恢复默认，仅保存于本机偏好文件），以及**默认时间范围与趋势粒度**（打开用量页时的初始范围/粒度，如「当日 + 小时」「近 7 天 + 月」等，未设置时为近 7 天 + 日）
+- **通用**：界面语言（跟随系统 / 中文 / English，自动检测系统语言）与**定时刷新**（关闭 / 5 分钟 / 15 分钟 / **30 分钟（默认）** / 1 小时 / 6 小时 / 24 小时；定时自动扫描本地日志并同步远端主机）；还可自定义**本机标签**（设备页签与请求日志里默认「本机」的显示名称，留空恢复默认，仅保存于本机偏好文件），以及**默认时间范围与趋势粒度**（打开用量页时的初始范围/粒度，如「当日 + 小时」「近 7 天 + 月」等，未设置时为近 7 天 + 日）；还可设置**月度预算（USD，可选）**，用于预算卡的燃烧率与月末预测
 - **Agent 开关**：关闭的 Agent 不展示、不拉取
 - **远端主机（SSH）**：增删改与测试连接
 
@@ -34,7 +39,7 @@
 ```json
 [
   { "name": "dev1", "target": "dev1" },
-  { "name": "srv2", "target": "user@10.0.0.2", "passwordCommand": "security find-generic-password -s agent-usage-ssh-srv2 -w" }
+  { "name": "srv2", "target": "user@example.com", "passwordCommand": "security find-generic-password -s agent-usage-ssh-srv2 -w" }
 ]
 ```
 
@@ -42,7 +47,7 @@
 - 可选字段：`port`、`identityFile`、`nodePath`（远端 node 路径）、`cacheDir`（远端增量缓存目录）、`timeoutMs`、`enabled`
 - 远端要求：无需安装任何额外软件，插件自动探测 JS 运行时（PATH / nvm / volta / fnm / asdf / homebrew 等常见位置，并尝试加载 `~/.nvm/nvm.sh`）；探测不到时才需要填 `nodePath`。SQLite 源需 Node ≥ 22.5，否则自动跳过；首次拉取为全量，之后增量
 - 安全：插件不读取/解密任何远端凭据；远端只读日志，仅写一个小增量缓存（`~/.cache/agent-usage-plugin`）
-- 界面：顶部「设备」页签可切换聚合 / 单机视图（页签下方显示各机器的同步状态）；请求日志带设备来源标签
+- 界面：顶部「设备」页签可切换聚合 / 单机视图（页签下方显示各机器的同步状态）；单 Agent 请求日志带设备来源标签
 
 ## 数据与权限
 
@@ -65,18 +70,23 @@ Data sources (read locally on the daemon host; remote machines are collected ove
 - OpenCode: `~/.local/share/opencode/opencode.db` (read-only via node:sqlite; reasoning tokens count as output, matching the billing basis)
 - Pi: `~/.pi/agent/sessions` (including forks and sub-session directories; messages are deduplicated across files, so copied fork segments are not counted twice)
 
-Interface: the "Usage" row at the bottom of the sidebar shows today's tokens; clicking it opens a full-screen page with ranges (last 24 hours / today / last 7 days / last 30 days / last 12 weeks / last 12 months / custom range picked on a calendar), and the trend chart switches between hour / day / week / month aggregation (day by default; range and granularity are independent).
+Interface: the "Usage" row at the bottom of the sidebar shows today's tokens; clicking it opens a full-screen dashboard. The dashboard has six preset pages (Overview, Composition, Efficiency, Rhythm, Sessions, Compare) and supports custom pages (create blank or duplicate the current page, rename, reorder, hide, delete; custom pages live in the aggregate view, while agent tabs reuse the preset pages). Every chart is a card that can move up/down, switch full/half width, hide or be removed; layouts are saved per page in local preferences.
 
-- Two-level tabs at the top: (1) device switching (aggregate / local / each remote, with "aggregate" first) and (2) agent tabs (overview + sessions + Claude Code / Codex / OpenCode / Pi); the "Settings" entry sits to the right of the refresh button at the top right (agent toggles and SSH host management)
-- Overview: total cards, trend chart (bar or line, four-segment granularity switch), breakdowns by agent / model / project; a "counting basis and known differences" note at the bottom explains the comparison with proxy tools such as CC Switch (including why some figures cannot be aligned)
-- Chart interaction: hover (or tap) the chart to see that period's usage detail (total tokens split by agent); the tooltip shows the full period label (for example `2026-08-15 14:00`)
-- Agent tab: summary cards, trend chart (sharing the hour/day/week/month switch with the overview), model breakdown, project breakdown, session breakdown, and request log. Sessions are aggregated by session ID and sorted by start time: each row shows the first user message as the title (some injected text is skipped; otherwise the first 8 characters of the session ID), project, request count, tokens, input/output/cache split, and duration, 20 per page; the count covers every session of that agent in the range while the list shows the latest 200, and a session belongs to the range its first request falls into. The request log (time, model, project, session, input/output/cache tokens) keeps only the most recent ~400 calls per agent; both the session list and the request log paginate 20 rows per page
+- Device tabs (aggregate / local / each remote), agent tabs (overview + Claude Code / Codex / OpenCode / Pi), ranges and trend granularity stay at the top; page tabs and cards hold the analysis
+- Overview: usage pulse, token-type stack / requests / cost / 7-day forecast trend, period comparison, outlier days, agent share, host comparison
+- Composition: token mix, model/project ranking with concentration, agent × model and project × agent heatmaps, share map
+- Efficiency: cache hit and cache read/write, tokens per request, input/output structure, model efficiency map, cost trend/efficiency, cumulative usage
+- Rhythm: year calendar, weekday × hour punchcard, 24-hour profile, weekday profile, activity streak, hour × agent heatmap
+- Sessions: duration/token scatter, distribution histograms, top sessions, swimlane, request-size histogram, recent pace, paginated session list and request log
+- Compare: agent radar, monthly budget burn with month-end projection, data coverage and host sync state
+- Chart interaction: tap a chart for that period's detail; lists show top 5/6 with expand; cost cards only count agents that report cost
+- Sessions are grouped by session ID; one agent shows the latest 200 sessions, the request log keeps about 400 calls per agent and reports up to 120; both paginate 20 rows
 
 Refresh: the first scan reads the full history (about 30 seconds locally, with progress shown on the page), after which files refresh incrementally (about 1-2 seconds); a debounced incremental refresh triggers automatically when an agent turn ends. After a plugin upgrade (from v0.3.0, statistics are cached per hour and per session) one full rescan runs. The session index keeps at most the 8,000 most recent sessions (older ones are evicted by last activity time).
 
 Settings (the "Settings" entry at the top right of the usage page, or Paseo Settings → Plugins):
 
-- **General**: interface language (follow system / Chinese / English, auto-detected) and **auto refresh** (off / 5 min / 15 min / **30 min (default)** / 1 hour / 6 hours / 24 hours; periodically scans local logs and syncs remote hosts); you can also set a custom **local device label** (the display name used instead of the default "本机 / Local" in the device tabs and request log; leave empty to restore the default, stored only in the local preference file), and a **default range and trend granularity** (the initial range/granularity when the usage page opens, such as "today + hour" or "last 7 days + month"; unset means last 7 days + day)
+- **General**: interface language (follow system / Chinese / English, auto-detected) and **auto refresh** (off / 5 min / 15 min / **30 min (default)** / 1 hour / 6 hours / 24 hours; periodically scans local logs and syncs remote hosts); you can also set a custom **local device label** (the display name used instead of the default "本机 / Local" in the device tabs and request log; leave empty to restore the default, stored only in the local preference file), and a **default range and trend granularity** (the initial range/granularity when the usage page opens, such as "today + hour" or "last 7 days + month"; unset means last 7 days + day); an optional **monthly budget (USD)** drives the budget card burn rate and month-end projection
 - **Agent toggles**: disabled agents are neither shown nor fetched
 - **Remote hosts (SSH)**: add, edit, delete, and test connections
 
@@ -90,7 +100,7 @@ Usage from other machines can be counted in as well. Two ways to configure it:
 ```json
 [
   { "name": "dev1", "target": "dev1" },
-  { "name": "srv2", "target": "user@10.0.0.2", "passwordCommand": "security find-generic-password -s agent-usage-ssh-srv2 -w" }
+  { "name": "srv2", "target": "user@example.com", "passwordCommand": "security find-generic-password -s agent-usage-ssh-srv2 -w" }
 ]
 ```
 
@@ -98,7 +108,7 @@ Usage from other machines can be counted in as well. Two ways to configure it:
 - Optional fields: `port`, `identityFile`, `nodePath` (remote node path), `cacheDir` (remote incremental cache directory), `timeoutMs`, `enabled`
 - Remote requirements: no extra software to install; the plugin auto-detects a JS runtime (common locations under PATH / nvm / volta / fnm / asdf / homebrew, and tries to load `~/.nvm/nvm.sh`); fill `nodePath` only when detection fails. The SQLite source needs Node >= 22.5, otherwise it is skipped; the first fetch is full, later ones incremental
 - Security: the plugin never reads or decrypts any remote credentials; remote logs are read-only and only a small incremental cache is written (`~/.cache/agent-usage-plugin`)
-- Interface: the "Device" tabs at the top switch between aggregate and single-machine views (sync status per machine shows below the tabs); request log rows carry a device source label
+- Interface: the "Device" tabs at the top switch between aggregate and single-machine views (sync status per machine shows below the tabs); request log rows for a single agent carry a device source label
 
 ## Data and permissions
 

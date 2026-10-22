@@ -2,6 +2,7 @@ import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import type { TextStyle, ViewStyle } from "react-native";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { Icon } from "@getpaseo/plugin/client/react-native";
 import type { UsageCalendarStats, UsageHistogramBucket, UsageSessionScatterPoint, UsageTimeMatrix } from "../shared/usage";
 import { calendarDates } from "./dashboard-data";
 import { agentColor } from "./agents";
@@ -19,24 +20,77 @@ export function useWidth(): { width: number; onLayout: (event: { nativeEvent: { 
   return { width, onLayout: (event) => setWidth(Math.round(event.nativeEvent.layout.width)) };
 }
 
+export function InfoTip({ theme, text, label }: { theme: Theme; text: string; label?: string }) {
+  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const visible = open || hovered;
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label ?? text}
+        accessibilityState={{ expanded: visible }}
+        hitSlop={8}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => {
+          setHovered(false);
+          setOpen(false);
+        }}
+        onPress={() => setOpen((value) => !value)}
+        style={{ width: 18, height: 18, alignItems: "center", justifyContent: "center" }}
+      >
+        <Icon name="CircleHelp" size={15} color={theme.colors.foreground} />
+      </Pressable>
+      {visible ? (
+        <View
+          pointerEvents="none"
+          accessibilityLiveRegion="polite"
+          style={{
+            position: "absolute",
+            top: 20,
+            left: 0,
+            right: 0,
+            zIndex: 30,
+            elevation: 8,
+            backgroundColor: theme.colors.surface0,
+            borderColor: theme.colors.border,
+            borderWidth: 1,
+            borderRadius: 8,
+            paddingHorizontal: 9,
+            paddingVertical: 7,
+            shadowColor: "#000000",
+            shadowOpacity: 0.18,
+            shadowRadius: 10,
+            shadowOffset: { width: 0, height: 4 },
+          }}
+        >
+          <Text style={{ fontSize: 10, lineHeight: 14, color: theme.colors.foreground }}>{text}</Text>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
 export function CardFrame({
   theme,
   title,
-  hint,
   trailing,
   children,
   footer,
   highlight = false,
   fill = false,
+  info,
+  infoLabel,
 }: {
   theme: Theme;
   title: string;
-  hint?: string;
   trailing?: ReactNode;
   children: ReactNode;
   footer?: string;
   highlight?: boolean;
   fill?: boolean;
+  info?: string;
+  infoLabel?: string;
 }) {
   return (
     <View
@@ -51,10 +105,12 @@ export function CardFrame({
         gap: 10,
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, zIndex: 20 }}>
         <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-          <Text style={{ fontSize: 13, fontWeight: "600", color: theme.colors.foreground }}>{title}</Text>
-          {hint ? <Text style={{ fontSize: 10, lineHeight: 14, color: theme.colors.foregroundMuted }}>{hint}</Text> : null}
+          <View style={{ position: "relative", flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <Text style={{ flexShrink: 1, fontSize: 13, fontWeight: "600", color: theme.colors.foreground }}>{title}</Text>
+            {info ? <InfoTip theme={theme} text={info} label={infoLabel} /> : null}
+          </View>
         </View>
         {trailing}
       </View>

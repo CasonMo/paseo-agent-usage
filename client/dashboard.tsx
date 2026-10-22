@@ -96,7 +96,7 @@ type Mode = "browse" | "edit" | "pages" | "picker";
 type Persist = (next: DashboardConfig | ((current: DashboardConfig) => DashboardConfig)) => void;
 
 export function Dashboard({ data, scope, theme, compact }: { data: DashboardData; scope: DashboardScope; theme: PluginScreenProps["theme"]; compact: boolean }) {
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const prefsQuery = usePrefs(detectSystemLocale());
   const setPrefs = useSetPrefs();
   const queryClient = useQueryClient();
@@ -263,7 +263,8 @@ export function Dashboard({ data, scope, theme, compact }: { data: DashboardData
                       <CardFrame
                         theme={theme}
                         title={cardTitle(instance.card as CardId, locale)}
-                        hint={mode === "edit" ? cardDescription(instance.card as CardId, locale) : undefined}
+                        info={cardDescription(instance.card as CardId, locale)}
+                        infoLabel={t("card.info")}
                         highlight={mode === "edit"}
                         fill={!compact}
                         trailing={mode === "edit" ? <CardEditControls theme={theme} locale={locale} page={configPage} instance={instance} persist={persist} /> : undefined}

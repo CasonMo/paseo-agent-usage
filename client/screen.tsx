@@ -9,7 +9,10 @@ import { fromAgentReport, fromReport } from "./dashboard-data";
 import { DateRangePicker } from "./date-range";
 import { useAgentReport, usePrefs, useRefreshUsage, useUpdateCheck, useUsageReport } from "./data";
 import { detectSystemLocale, useI18n, type Translate } from "./i18n";
-import { MetricSwitch } from "./visuals";
+
+type SelectKey = "device" | "agent" | "range" | "granularity";
+interface SelectOption { value: string; label: string }
+interface SelectSpec { title: string; value: string; options: SelectOption[]; onSelect: (value: string) => void }
 
 const RANGE_KEYS: UsageRangeKey[] = ["24h", "today", "7d", "30d", "12w", "12m", "custom"];
 const RANGE_LABEL_KEYS = ["range.24h", "range.today", "range.7d", "range.30d", "range.12w", "range.12m", "range.custom"] as const;
@@ -50,6 +53,8 @@ export function UsageScreen(props: PluginScreenProps) {
   const [customTo, setCustomTo] = useState<string>("");
   const [showNotes, setShowNotes] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [openSelect, setOpenSelect] = useState<SelectKey | null>(null);
+  const [showCustomPicker, setShowCustomPicker] = useState(false);
   const updateQuery = useUpdateCheck();
   const prefsQuery = usePrefs(detectSystemLocale());
   const deviceOrigin = device === "aggregate" ? undefined : device;
@@ -60,10 +65,26 @@ export function UsageScreen(props: PluginScreenProps) {
     return { from: customFrom, to: customTo };
   }, [effectiveRange, customFrom, customTo]);
   const query = useUsageReport(effectiveRange, deviceOrigin, customPayload, effectiveGranularity);
+
+  function chooseRange(next: UsageRangeKey) {
+    setRange(next);
+    if (next === "custom" && (!customFrom || !customTo)) {
+      const defaults = defaultCustomRange();
+      setCustomFrom(defaults.from);
+      setCustomTo(defaults.to);
+    }
+    setOpenSelect(null);
+    setShowCustomPicker(false);
+  }
   const refreshUsage = useRefreshUsage();
   const { t } = useI18n();
   const localLabel = prefsQuery.data?.localAlias || t("origin.local");
   const ranges = useMemo(() => RANGE_KEYS.map((key, index) => ({ key, label: t(RANGE_LABEL_KEYS[index]) })), [t]);
+  const rangeDisplay = useMemo(() => {
+    const customLabel = t("range.custom");
+    if (effectiveRange !== "custom" || !customFrom || !customTo) return ranges.find((item) => item.key === effectiveRange)?.label ?? effectiveRange;
+    return `${customLabel} ${customFrom.replace(/-/g, "/")}-${customTo.replace(/-/g, "/")}`;
+  }, [effectiveRange, customFrom, customTo, ranges, t]);
   const granularities = useMemo(
     () => GRANULARITY_KEYS.map((key, index) => ({ value: key, label: t(GRANULARITY_LABEL_KEYS[index]) })),
     [t],
@@ -73,23 +94,17 @@ export function UsageScreen(props: PluginScreenProps) {
     () =>
       ({
         screen: { flex: 1, backgroundColor: theme.colors.surface0 },
-        content: { padding: compact ? 14 : 20, gap: compact ? 14 : 18, paddingBottom: 48 },
-        headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-        title: { fontSize: 18, fontWeight: "700", color: theme.colors.foreground },
-        subtitle: { fontSize: 11, color: theme.colors.foregroundMuted },
-        buttonRow: { flexDirection: "row", gap: 6 },
-        refreshButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: theme.colors.surface1 },
-        refreshText: { fontSize: 12, color: theme.colors.foreground },
-        tabRow: { gap: 6, paddingVertical: 2 },
-        tab: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: theme.colors.surface1 },
-        tabText: { fontSize: 12, color: theme.colors.foregroundMuted },
-        tabActive: { backgroundColor: theme.colors.accent },
-        tabTextActive: { color: theme.colors.accentForeground },
-        pillRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-        pill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: theme.colors.surface1 },
-        pillText: { fontSize: 12, color: theme.colors.foregroundMuted },
-        pillActive: { backgroundColor: theme.colors.accent },
-        pillTextActive: { color: theme.colors.accentForeground },
+        content: { padding: compact ? 12 : 16, gap: compact ? 10 : 12, paddingBottom: 48 },
+        headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" },
+        headerActions: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 8, flexShrink: 1, flexWrap: "wrap" },
+        title: { fontSize: 17, fontWeight: "700", color: theme.colors.foreground },
+        subtitle: { fontSize: 10, color: theme.colors.foregroundMuted },
+        buttonRow: { flexDirection: "row", gap: 5 },
+        refreshButton: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 7, backgroundColor: theme.colors.surface1 },
+        refreshText: { fontSize: 11, color: theme.colors.foreground },
+        toolbar: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", gap: 6, flexShrink: 1 },
+        dateButton: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, backgroundColor: theme.colors.surface1, borderColor: theme.colors.border, borderWidth: 1 },
+        dateButtonText: { fontSize: 10, color: theme.colors.foreground },
         banner: { backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 10 },
         bannerText: { fontSize: 11, color: theme.colors.foregroundMuted },
         updateBanner: {
@@ -112,8 +127,6 @@ export function UsageScreen(props: PluginScreenProps) {
         sectionTitle: { fontSize: 12, fontWeight: "600", color: theme.colors.foreground },
         notesToggle: { fontSize: 11, color: theme.colors.foregroundMuted },
         notesText: { fontSize: 11, color: theme.colors.foregroundMuted, lineHeight: 16 },
-        controlRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
-        controlLabel: { fontSize: 10, color: theme.colors.foregroundMuted },
       }) satisfies Record<string, ViewStyle | TextStyle>,
     [theme, compact],
   );
@@ -142,6 +155,26 @@ export function UsageScreen(props: PluginScreenProps) {
   const activeTab = hasTab ? tab : "overview";
   const agentQuery = useAgentReport(activeTab === "overview" ? "claude" : activeTab, effectiveRange, activeTab !== "overview", deviceOrigin, customPayload, effectiveGranularity);
   const dashboardData = activeTab === "overview" ? (data ? fromReport(data) : null) : agentQuery.data ? fromAgentReport(agentQuery.data) : null;
+  const selectSpec: SelectSpec | null =
+    openSelect === "device"
+      ? { title: t("toolbar.device"), value: activeDevice, options: deviceTabs.map((item) => ({ value: item.id, label: item.label })), onSelect: (value) => setDevice(value) }
+      : openSelect === "agent"
+        ? { title: t("toolbar.agent"), value: activeTab, options: tabs.map((item) => ({ value: item.id, label: item.label })), onSelect: (value) => setTab(value) }
+        : openSelect === "range"
+          ? {
+              title: t("toolbar.range"),
+              value: effectiveRange,
+              options: ranges.map((item) => ({ value: item.key, label: item.label })),
+              onSelect: (value) => chooseRange(value as UsageRangeKey),
+            }
+          : openSelect === "granularity"
+            ? {
+                title: t("toolbar.granularity"),
+                value: effectiveGranularity,
+                options: granularities.map((item) => ({ value: item.value, label: item.label })),
+                onSelect: (value) => setGranularity(value as UsageGranularity),
+              }
+            : null;
 
   if (showSettings) {
     return <ConfigScreen {...props} onBack={() => setShowSettings(false)} />;
@@ -151,27 +184,65 @@ export function UsageScreen(props: PluginScreenProps) {
     <View style={styles.screen}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.headerRow}>
-          <View style={{ gap: 2, flexShrink: 1 }}>
-            <Text style={styles.title}>{t("app.title")}</Text>
-            <Text style={styles.subtitle}>{data?.firstDay ? t("app.subtitleSince", { day: data.firstDay }) : t("app.subtitle")}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} style={styles.title}>{t("app.title")}</Text>
+            <Text numberOfLines={1} style={[styles.subtitle, { flexShrink: 1 }]}>{data?.firstDay ? t("app.subtitleSince", { day: data.firstDay }) : t("app.subtitle")}</Text>
           </View>
-          <View style={styles.buttonRow}>
-            <Pressable accessibilityRole="button" accessibilityLabel={t("app.a11yOpenConfig")} style={styles.refreshButton} onPress={() => setShowSettings(true)}>
-              <Text style={styles.refreshText}>{t("app.config")}</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={t("app.a11yRefresh")}
-              style={styles.refreshButton}
-              onPress={() => {
-                void refreshUsage({}).then(() => {
-                  void query.refetch();
-                  void agentQuery.refetch();
-                });
-              }}
-            >
-              <Text style={styles.refreshText}>{query.isFetching ? t("app.refreshing") : t("app.refresh")}</Text>
-            </Pressable>
+          <View style={styles.headerActions}>
+            <View style={styles.toolbar}>
+              <CompactSelect
+                theme={theme}
+                compact={compact}
+                label={t("toolbar.device")}
+                value={deviceTabs.find((item) => item.id === activeDevice)?.label ?? activeDevice}
+                onPress={() => setOpenSelect("device")}
+              />
+              <CompactSelect
+                theme={theme}
+                compact={compact}
+                label={t("toolbar.agent")}
+                value={tabs.find((item) => item.id === activeTab)?.label ?? activeTab}
+                onPress={() => setOpenSelect("agent")}
+              />
+              <CompactSelect
+                theme={theme}
+                compact={compact}
+                label={t("toolbar.range")}
+                value={rangeDisplay}
+                grow
+                onPress={() => setOpenSelect("range")}
+              />
+              <CompactSelect
+                theme={theme}
+                compact={compact}
+                label={t("toolbar.granularity")}
+                value={granularities.find((item) => item.value === effectiveGranularity)?.label ?? effectiveGranularity}
+                onPress={() => setOpenSelect("granularity")}
+              />
+              {effectiveRange === "custom" ? (
+                <Pressable accessibilityRole="button" onPress={() => setShowCustomPicker((value) => !value)} style={styles.dateButton}>
+                  <Text style={styles.dateButtonText}>{showCustomPicker ? t("toolbar.hideDates") : t("toolbar.editDates")}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            <View style={styles.buttonRow}>
+              <Pressable accessibilityRole="button" accessibilityLabel={t("app.a11yOpenConfig")} style={styles.refreshButton} onPress={() => setShowSettings(true)}>
+                <Text style={styles.refreshText}>{t("app.config")}</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("app.a11yRefresh")}
+                style={styles.refreshButton}
+                onPress={() => {
+                  void refreshUsage({}).then(() => {
+                    void query.refetch();
+                    void agentQuery.refetch();
+                  });
+                }}
+              >
+                <Text style={styles.refreshText}>{query.isFetching ? t("app.refreshing") : t("app.refresh")}</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
 
@@ -184,62 +255,19 @@ export function UsageScreen(props: PluginScreenProps) {
           </View>
         ) : null}
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabRow}>
-          {deviceTabs.map((item) => {
-            const active = item.id === activeDevice;
-            return (
-              <Pressable key={item.id} onPress={() => setDevice(item.id)} style={active ? [styles.tab, styles.tabActive] : styles.tab}>
-                <Text style={active ? [styles.tabText, styles.tabTextActive] : styles.tabText}>{item.label}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabRow}>
-          {tabs.map((item) => {
-            const active = item.id === activeTab;
-            return (
-              <Pressable key={item.id} onPress={() => setTab(item.id)} style={active ? [styles.tab, styles.tabActive] : styles.tab}>
-                <Text style={active ? [styles.tabText, styles.tabTextActive] : styles.tabText}>{item.label}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        <View style={styles.pillRow}>
-          {ranges.map((item) => {
-            const active = item.key === effectiveRange;
-            return (
-              <Pressable
-                key={item.key}
-                onPress={() => {
-                  setRange(item.key);
-                  if (item.key === "custom" && (!customFrom || !customTo)) {
-                    const defaults = defaultCustomRange();
-                    setCustomFrom(defaults.from);
-                    setCustomTo(defaults.to);
-                  }
-                }}
-                style={active ? [styles.pill, styles.pillActive] : styles.pill}
-              >
-                <Text style={active ? [styles.pillText, styles.pillTextActive] : styles.pillText}>{item.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <View style={styles.controlRow}>
-          <Text style={styles.controlLabel}>{t("chart.granularity")}</Text>
-          <MetricSwitch theme={theme} value={effectiveGranularity} options={granularities} onChange={setGranularity} />
-        </View>
-
-        {effectiveRange === "custom" ? (
+        {effectiveRange === "custom" && showCustomPicker ? (
           <DateRangePicker
             theme={theme}
             compact={compact}
             from={customFrom}
             to={customTo}
             onChange={(next) => {
+              if (!next.from || !next.to) {
+                setCustomFrom("");
+                setCustomTo("");
+                chooseRange("7d");
+                return;
+              }
               setCustomFrom(next.from);
               setCustomTo(next.to);
             }}
@@ -301,6 +329,134 @@ export function UsageScreen(props: PluginScreenProps) {
           )}
         </View>
       </ScrollView>
+      {selectSpec ? (
+        <SelectOverlay
+          theme={theme}
+          compact={compact}
+          title={selectSpec.title}
+          value={selectSpec.value}
+          options={selectSpec.options}
+          onSelect={(value) => {
+            selectSpec.onSelect(value);
+            setOpenSelect(null);
+          }}
+          onClose={() => setOpenSelect(null)}
+          closeLabel={t("common.close")}
+        />
+      ) : null}
+    </View>
+  );
+}
+function CompactSelect({
+  theme,
+  compact,
+  label,
+  value,
+  onPress,
+  grow = false,
+}: {
+  theme: PluginScreenProps["theme"];
+  compact: boolean;
+  label: string;
+  value: string;
+  onPress: () => void;
+  grow?: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${value}`}
+      onPress={onPress}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 5,
+        borderRadius: 6,
+        backgroundColor: theme.colors.surface1,
+        borderColor: theme.colors.border,
+        borderWidth: 1,
+        maxWidth: compact ? (grow ? "100%" : "48%") : undefined,
+      }}
+    >
+      <Text style={{ fontSize: 9, color: theme.colors.foregroundMuted }}>{label}</Text>
+      <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: 11, fontWeight: "600", color: theme.colors.foreground }}>{value}</Text>
+      <Text style={{ fontSize: 9, color: theme.colors.foregroundMuted }}>▾</Text>
+    </Pressable>
+  );
+}
+
+function SelectOverlay({
+  theme,
+  compact,
+  title,
+  value,
+  options,
+  onSelect,
+  onClose,
+  closeLabel,
+}: {
+  theme: PluginScreenProps["theme"];
+  compact: boolean;
+  title: string;
+  value: string;
+  options: readonly SelectOption[];
+  onSelect: (value: string) => void;
+  onClose: () => void;
+  closeLabel: string;
+}) {
+  return (
+    <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 100, elevation: 20 }}>
+      <Pressable accessible={false} onPress={onClose} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.35)" }} />
+      <View
+        accessibilityViewIsModal
+        onAccessibilityEscape={onClose}
+        style={{
+          marginTop: compact ? 64 : 84,
+          alignSelf: "center",
+          width: compact ? "92%" : 420,
+          maxHeight: compact ? 430 : 520,
+          backgroundColor: theme.colors.surface1,
+          borderColor: theme.colors.border,
+          borderWidth: 1,
+          borderRadius: 12,
+          padding: 12,
+          gap: 6,
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Text style={{ flex: 1, fontSize: 13, fontWeight: "700", color: theme.colors.foreground }}>{title}</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel={closeLabel} onPress={onClose} style={{ padding: 4 }}>
+            <Text style={{ fontSize: 12, color: theme.colors.foregroundMuted }}>✕</Text>
+          </Pressable>
+        </View>
+        <ScrollView style={{ maxHeight: compact ? 360 : 440 }}>
+          {options.map((option) => {
+            const active = option.value === value;
+            return (
+              <Pressable
+                key={option.value}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() => onSelect(option.value)}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  paddingVertical: 9,
+                  paddingHorizontal: 8,
+                  borderRadius: 6,
+                  backgroundColor: active ? theme.colors.surface2 : "transparent",
+                }}
+              >
+                <Text style={{ flex: 1, fontSize: 12, color: active ? theme.colors.foreground : theme.colors.foregroundMuted, fontWeight: active ? "600" : "400" }}>{option.label}</Text>
+                {active ? <Text style={{ fontSize: 11, color: theme.colors.accent }}>✓</Text> : null}
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
     </View>
   );
 }

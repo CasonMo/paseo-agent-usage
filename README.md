@@ -14,6 +14,7 @@ Paseo plugin: token usage statistics for coding agents, computed from their loca
 - Sessions: duration/token scatter, distribution histograms, top sessions, swimlane, request-size histogram, recent pace, paginated session list and request log
 - Compare: agent radar, monthly budget burn with month-end projection, data coverage and host sync state
 - Cost cards only count agents that report cost (Claude/Codex may report zero); the optional monthly budget is set in Settings → General
+- OpenCode: supports both 1.x (`session`/`message`) and 2.x (`session_v2`/`session_message`) SQLite stores, detects the layout automatically and deduplicates migrated messages by id
 - Kept from the previous version: device selector (aggregate / local / each remote), agent selector (overview + Claude Code / Codex / OpenCode / Pi), ranges (last 24 hours / today / 7 days / 30 days / 12 weeks / 12 months / custom), and an independent trend granularity (hour / day / week / month)
 - Sessions are grouped by session ID; one agent shows the latest 200 sessions, the request log keeps about 400 calls per agent and reports up to 120; both paginate 20 rows
 - SSH: collect usage from other machines using the system ssh command; hosts are managed in the usage screen or Paseo Settings
@@ -52,6 +53,7 @@ Paseo 插件：基于各编码 Agent 本地会话日志统计 token 用量，支
 - 会话：会话散点、时长/Token 分布、Top 会话、会话泳道、请求大小、近期速率、分页会话明细与请求日志
 - 对比：Agent 雷达、月度预算燃烧率与月末预测、数据覆盖与主机同步状态
 - 成本卡只统计有上报的 Agent（Claude/Codex 可能为 0）；可选月度预算在「配置 → 通用」中设置
+- OpenCode：同时支持 1.x（`session`/`message`）与 2.x（`session_v2`/`session_message`）数据库，自动识别结构，并按消息 ID 对迁移前后的记录去重
 - 保留原有能力：设备选择器（聚合 / 本机 / 各远端）、Agent 选择器（总览 + Claude Code / Codex / OpenCode / Pi）、时间范围（近 24 小时 / 今日 / 近 7 天 / 近 30 天 / 近 12 周 / 近 12 月 / 自定义）、独立的趋势粒度（小时 / 日 / 周 / 月）
 - 会话按会话 ID 聚合；单个 Agent 展示最近 200 个会话，请求日志底层每个 Agent 保留约 400 条、报告最多展示 120 条；两者每页 20 条
 - SSH：用系统 ssh 命令从其他机器采集用量；主机在用量页或 Paseo 设置中管理

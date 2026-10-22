@@ -6,7 +6,7 @@
 
 - Claude Code：`~/.claude/projects`（含 subagents）
 - Codex：`~/.codex/sessions` 与 `~/.codex/archived_sessions`
-- OpenCode：`~/.local/share/opencode/opencode.db`（通过 node:sqlite 只读；reasoning token 计入输出，与计费口径一致）
+- OpenCode：`~/.local/share/opencode/opencode.db`（通过 node:sqlite 只读；自动识别 1.x 的 `session`/`message` 与 2.x 的 `session_v2`/`session_message`，迁移期间按消息 ID 去重；reasoning token 计入输出，与计费口径一致）
 - Pi：`~/.pi/agent/sessions`（含 forks 与子会话目录；跨文件按消息去重，fork 复制段不重复计）
 
 界面：侧边栏底部「用量」行显示今日 token；点击打开全屏看板。看板包含 6 个预设页（总览、构成、效率、节奏、会话、对比），也支持自定义页面（空白新建或复制当前页，改名、排序、隐藏、删除；自定义页只在聚合视图生效，Agent 视图复用预设页）。每张图表都是卡片，可上移/下移、整行/半宽、隐藏或移除，布局按页面保存在本机偏好里。
@@ -67,7 +67,7 @@ Data sources (read locally on the daemon host; remote machines are collected ove
 
 - Claude Code: `~/.claude/projects` (including subagents)
 - Codex: `~/.codex/sessions` and `~/.codex/archived_sessions`
-- OpenCode: `~/.local/share/opencode/opencode.db` (read-only via node:sqlite; reasoning tokens count as output, matching the billing basis)
+- OpenCode: `~/.local/share/opencode/opencode.db` (read-only via node:sqlite; detects the 1.x `session`/`message` and 2.x `session_v2`/`session_message` layouts, deduplicating by message id during a migration; reasoning tokens count as output, matching the billing basis)
 - Pi: `~/.pi/agent/sessions` (including forks and sub-session directories; messages are deduplicated across files, so copied fork segments are not counted twice)
 
 Interface: the "Usage" row at the bottom of the sidebar shows today's tokens; clicking it opens a full-screen dashboard. The dashboard has six preset pages (Overview, Composition, Efficiency, Rhythm, Sessions, Compare) and supports custom pages (create blank or duplicate the current page, rename, reorder, hide, delete; custom pages live in the aggregate view, while the agent view reuses the preset pages). Every chart is a card that can move up/down, switch full/half width, hide or be removed; layouts are saved per page in local preferences.

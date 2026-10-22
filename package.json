@@ -1,6 +1,6 @@
 {
   "name": "paseo-agent-usage",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "基于本地会话日志统计各 Agent 的用量：Claude Code、Codex、OpenCode、Pi；支持 SSH 远端机器、6 个预设分析页与自定义看板、卡片顺序/宽度/隐藏、预算与会话/请求明细",
   "license": "MIT",
   "repository": {
@@ -25,8 +25,9 @@
     "typecheck": "tsc --noEmit",
     "build:collector": "node scripts/build-collector.mjs",
     "check:dashboard": "tsx scripts/check-dashboard.ts",
+    "check:opencode": "tsx scripts/check-opencode.ts",
     "check:report": "tsx scripts/check-report.ts",
-    "check": "npm run typecheck && npm run check:dashboard && npm run check:report"
+    "check": "npm run typecheck && npm run check:dashboard && npm run check:report && npm run check:opencode"
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.11.2",

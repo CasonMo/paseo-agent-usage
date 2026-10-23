@@ -1,6 +1,6 @@
 {
   "name": "paseo-agent-usage",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "description": "基于本地会话日志统计各 Agent 的用量：Claude Code、Codex、OpenCode、Pi；支持 SSH 远端机器、6 个预设分析页与自定义看板、卡片顺序/宽度/隐藏、预算与会话/请求明细",
   "license": "MIT",
   "repository": {

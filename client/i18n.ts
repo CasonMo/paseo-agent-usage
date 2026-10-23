@@ -194,6 +194,15 @@ const zh = {
   "config.agents": "Agent 开关",
   "config.agentsHint": "关闭的 Agent 不展示、不拉取。",
 
+  "config.feedback": "反馈与扩展",
+  "config.feedbackHint": "发现问题、想要新功能，或希望接入新的 Agent？在 GitHub 上告诉我们。",
+  "config.feedback.bug": "报告问题",
+  "config.feedback.bugHint": "附上 Paseo 与插件版本、复现步骤和预期结果。",
+  "config.feedback.feature": "提功能需求",
+  "config.feedback.featureHint": "描述使用场景、期望的交互和替代方案。",
+  "config.feedback.provider": "接入新的 Agent",
+  "config.feedback.providerHint": "提供 Agent 名称、日志位置和脱敏后的示例记录。",
+
   "hosts.title": "远端主机（SSH）",
   "hosts.add": "新增主机",
   "hosts.empty": "还没有远端主机。点击「新增主机」添加，支持 SSH 密钥或账号密码认证。",
@@ -221,7 +230,7 @@ const zh = {
   "hosts.notes2": "密码只保存在本机（hosts.json，权限 600），也可用取密命令从钥匙串读取。",
 } as const;
 
-type DictKey = keyof typeof zh;
+export type DictKey = keyof typeof zh;
 
 const en: Record<DictKey, string> = {
   "common.loading": "Loading…",
@@ -366,6 +375,15 @@ const en: Record<DictKey, string> = {
   "config.refresh.1440": "24 hours",
   "config.agents": "Agents",
   "config.agentsHint": "Disabled agents are hidden and not scanned.",
+
+  "config.feedback": "Feedback & extensions",
+  "config.feedbackHint": "Found a bug, want a feature, or need another agent supported? Tell us on GitHub.",
+  "config.feedback.bug": "Report a bug",
+  "config.feedback.bugHint": "Include the Paseo and plugin versions, steps to reproduce, and expected behavior.",
+  "config.feedback.feature": "Request a feature",
+  "config.feedback.featureHint": "Describe the use case, the interaction you expect, and alternatives.",
+  "config.feedback.provider": "Add an agent",
+  "config.feedback.providerHint": "Share the agent name, where it stores logs, and a desensitized sample record.",
 
   "hosts.title": "Remote hosts (SSH)",
   "hosts.add": "Add host",

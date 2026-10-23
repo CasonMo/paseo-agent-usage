@@ -1,10 +1,11 @@
 import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { ExternalLink } from "@getpaseo/plugin/client/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import type { TextStyle, ViewStyle } from "react-native";
 import { Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { PREFS_QUERY_KEY, useAgentsConfig, usePrefs, useSetAgentsConfig, useSetPrefs } from "./data";
-import { detectSystemLocale, setLanguageMode, useI18n, type LanguageMode } from "./i18n";
+import { detectSystemLocale, setLanguageMode, useI18n, type DictKey, type LanguageMode } from "./i18n";
 import type { UsageGranularity, UsagePrefs, UsageRangeKey } from "../shared/usage";
 import { HostsManager } from "./settings";
 
@@ -299,6 +300,44 @@ function AgentsSection({ theme, compact }: { theme: Theme; compact: boolean }) {
   );
 }
 
+const ISSUE_URL = "https://github.com/CasonMo/paseo-agent-usage/issues/new";
+
+const FEEDBACK_ITEMS: ReadonlyArray<{ template: string; title: DictKey; hint: DictKey }> = [
+  { template: "bug_report.yml", title: "config.feedback.bug", hint: "config.feedback.bugHint" },
+  { template: "feature_request.yml", title: "config.feedback.feature", hint: "config.feedback.featureHint" },
+  { template: "new_provider.yml", title: "config.feedback.provider", hint: "config.feedback.providerHint" },
+];
+
+function FeedbackSection({ theme }: { theme: Theme }) {
+  const { t } = useI18n();
+  const styles = useMemo(
+    () =>
+      ({
+        section: { backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 12, gap: 8 },
+        sectionTitle: { fontSize: 13, fontWeight: "600", color: theme.colors.foreground },
+        hint: { fontSize: 10, color: theme.colors.foregroundMuted },
+        item: { gap: 2, paddingVertical: 2 },
+        link: { fontSize: 12, color: theme.colors.accent },
+      }) satisfies Record<string, ViewStyle | TextStyle>,
+    [theme],
+  );
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>{t("config.feedback")}</Text>
+      <Text style={styles.hint}>{t("config.feedbackHint")}</Text>
+      {FEEDBACK_ITEMS.map((item) => (
+        <View key={item.template} style={styles.item}>
+          <ExternalLink href={`${ISSUE_URL}?template=${item.template}`} accessibilityLabel={t(item.title)}>
+            <Text style={styles.link}>{t(item.title)} ↗</Text>
+          </ExternalLink>
+          <Text style={styles.hint}>{t(item.hint)}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export function ConfigScreen({ theme, layout, onBack }: PluginSurfaceProps & { onBack?: () => void }) {
   const compact = layout.compact;
   const { t } = useI18n();
@@ -329,6 +368,7 @@ export function ConfigScreen({ theme, layout, onBack }: PluginSurfaceProps & { o
         <GeneralSection theme={theme} compact={compact} />
         <AgentsSection theme={theme} compact={compact} />
         <HostsManager theme={theme} />
+        <FeedbackSection theme={theme} />
       </ScrollView>
     </View>
   );

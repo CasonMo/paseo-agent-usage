@@ -11,15 +11,17 @@ export interface CardProps {
   compact: boolean;
   locale: Locale;
   budgetUsd?: number;
+  localAlias?: string;
 }
 
 export function pick(locale: Locale, zh: string, en: string): string {
   return locale === "zh" ? zh : en;
 }
 
-/** The daemon labels the local origin in its own locale; localize it at render time. */
-export function originLabel(origin: Pick<UsageOrigin, "id" | "label">, locale: Locale): string {
-  return origin.id === "local" ? pick(locale, "本机", "Local") : origin.label;
+/** The daemon labels the local origin in its own locale; localize it at render time, preferring the user's alias. */
+export function originLabel(origin: Pick<UsageOrigin, "id" | "label">, locale: Locale, localAlias?: string): string {
+  if (origin.id !== "local") return origin.label;
+  return localAlias?.trim() || pick(locale, "本机", "Local");
 }
 
 export function sum(values: readonly number[]): number {

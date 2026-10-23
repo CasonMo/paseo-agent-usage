@@ -392,13 +392,13 @@ export function AgentShareCard({ data, theme, locale }: CardProps) {
 
 type HostMetric = "tokens" | "requests";
 
-export function HostCompareCard({ data, theme, locale }: CardProps) {
+export function HostCompareCard({ data, theme, locale, localAlias }: CardProps) {
   const [metric, setMetric] = useState<HostMetric>("tokens");
   const origins = [...data.origins].sort((a, b) => (metric === "tokens" ? b.totalTokens - a.totalTokens : b.requests - a.requests));
   const total = sum(origins.map((origin) => (metric === "tokens" ? origin.totalTokens : origin.requests)));
   const rows = origins.map((origin, index) => ({
     key: origin.id,
-    label: originLabel(origin, locale),
+    label: originLabel(origin, locale, localAlias),
     sub: `${originStatus(locale, origin.status)} · ${originSync(locale, origin)}`,
     value: metric === "tokens" ? origin.totalTokens : origin.requests,
     color: index === 0 ? agentColor("claude") : index === 1 ? agentColor("codex") : agentColor("opencode"),

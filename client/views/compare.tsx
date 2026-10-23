@@ -85,7 +85,7 @@ export function BudgetCard({ data, theme, locale, compact, budgetUsd = 0 }: Card
   );
 }
 
-export function CoverageCard({ data, theme, locale, compact }: CardProps) {
+export function CoverageCard({ data, theme, locale, compact, localAlias }: CardProps) {
   const days = data.calendar.tokens.length;
   const active = activeDays(data.calendar);
   return (
@@ -102,7 +102,7 @@ export function CoverageCard({ data, theme, locale, compact }: CardProps) {
       />
       {data.origins.map((origin) => (
         <View key={origin.id} style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 5, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
-          <Text style={{ flex: 1, fontSize: 11, color: theme.colors.foreground }}>{originLabel(origin, locale)}</Text>
+          <Text style={{ flex: 1, fontSize: 11, color: theme.colors.foreground }}>{originLabel(origin, locale, localAlias)}</Text>
           <Text style={{ fontSize: 10, color: origin.status === "error" ? theme.colors.statusDanger : theme.colors.foregroundMuted }}>{originStatus(locale, origin.status)}</Text>
           <Text style={{ width: 64, textAlign: "right", fontSize: 10, color: theme.colors.foregroundMuted, fontVariant: ["tabular-nums"] }}>{formatTokens(origin.totalTokens)}</Text>
         </View>

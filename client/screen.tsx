@@ -276,7 +276,7 @@ export function UsageScreen(props: PluginScreenProps) {
 
         {activeDevice !== "aggregate" && selectedOrigin ? (
           <Text style={styles.footer}>
-            {selectedOrigin.label} · {originStatusText(t, selectedOrigin.status, selectedOrigin.lastPullAt)}
+            {selectedOrigin.id === "local" ? localLabel : selectedOrigin.label} · {originStatusText(t, selectedOrigin.status, selectedOrigin.lastPullAt)}
             {selectedOrigin.lastError ? ` · ${selectedOrigin.lastError}` : ""}
           </Text>
         ) : null}

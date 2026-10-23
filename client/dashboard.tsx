@@ -135,7 +135,7 @@ export function Dashboard({ data, scope, theme, compact }: { data: DashboardData
   const active = pages.find((item) => item.page.id === activePageId) ?? pages[0] ?? null;
   const configPage = active ? config.pages.find((page) => page.id === active.page.id) ?? active.page : null;
   const cards = active ? active.cards : [];
-  const cardProps: CardProps = { data, theme, compact, locale, budgetUsd: prefs?.monthlyBudgetUsd };
+  const cardProps: CardProps = { data, theme, compact, locale, budgetUsd: prefs?.monthlyBudgetUsd, localAlias: prefs?.localAlias };
 
   const persist: Persist = (nextOrUpdater) => {
     const next = typeof nextOrUpdater === "function" ? nextOrUpdater(configRef.current) : nextOrUpdater;

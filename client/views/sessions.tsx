@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { agentColor, agentShort } from "../agents";
+import { agentColor, agentShort, COST_COLOR, TOKEN_COLORS } from "../agents";
 import { formatCount, formatDurationMs, formatTokens, formatUsd, shortProject } from "../format";
 import { Empty, Histogram, MetricSwitch, ScatterPlot, Swimlane, TrendChart } from "../visuals";
 import { formatBucket, pick, sum, topSessionLabel, type CardProps } from "./shared";
@@ -67,7 +67,7 @@ export function SessionDistributionCard({ data, theme, locale }: CardProps) {
         ]}
         onChange={setMetric}
       />
-      <Histogram theme={theme} buckets={buckets} format={(from, to) => formatBucket(metric === "cost" ? "usd" : metric, from, to)} color={metric === "duration" ? "#7C9CB8" : metric === "tokens" ? "#C07A4E" : "#A9853F"} height={104} />
+      <Histogram theme={theme} buckets={buckets} format={(from, to) => formatBucket(metric === "cost" ? "usd" : metric, from, to)} color={metric === "duration" ? TOKEN_COLORS.cacheWrite : metric === "tokens" ? TOKEN_COLORS.output : COST_COLOR} height={104} />
       <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>
         {pick(locale, `中位 ${formatter(median)} · P90 ${formatter(p90)} · 共 ${stats.count} 个会话`, `Median ${formatter(median)} · P90 ${formatter(p90)} · ${stats.count} sessions`)}
       </Text>
@@ -90,7 +90,7 @@ export function TopSessionsCard({ data, theme, locale }: CardProps) {
             <Text style={{ fontSize: 11, fontWeight: "700", color: theme.colors.foreground, fontVariant: ["tabular-nums"] }}>{formatTokens(session.totalTokens)}</Text>
           </View>
           <Text numberOfLines={1} style={{ marginLeft: 22, fontSize: 9, color: theme.colors.foregroundMuted }}>
-            {[shortProject(session.project), formatDurationMs(session.durationMs), `${formatCount(session.requests)} req`, agentShort(session.agent)].join(" · ")}
+            {[shortProject(session.project), formatDurationMs(session.durationMs), `${formatCount(session.requests)} ${pick(locale, "次", "req")}`, agentShort(session.agent)].join(" · ")}
           </Text>
         </View>
       ))}
@@ -120,9 +120,9 @@ export function RequestSizeCard({ data, theme, locale }: CardProps) {
   if (stats.sampled === 0) return <Empty theme={theme} text={pick(locale, "最近调用日志没有可用样本。", "No recent call samples.")} />;
   return (
     <View style={{ gap: 6 }}>
-      <Histogram theme={theme} buckets={stats.histogram} format={(from, to) => formatBucket("tokens", from, to)} color="#8A7FA8" height={104} />
+      <Histogram theme={theme} buckets={stats.histogram} format={(from, to) => formatBucket("tokens", from, to)} color={TOKEN_COLORS.input} height={104} />
       <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>
-        {pick(locale, `中位 ${formatTokens(stats.medianTokens)} · P90 ${formatTokens(stats.p90Tokens)} · 采样 ${stats.sampled} 条`, `Median ${formatTokens(stats.medianTokens)} · P90 ${formatTokens(stats.p90Tokens)} · ${stats.sampled} samples`)}
+        {pick(locale, `中位 ${formatTokens(stats.medianTokens)} · P90 ${formatTokens(stats.p90Tokens)} · 共 ${formatCount(stats.sampled)} 次调用`, `Median ${formatTokens(stats.medianTokens)} · P90 ${formatTokens(stats.p90Tokens)} · ${formatCount(stats.sampled)} calls`)}
       </Text>
       <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "日志只保留最近约 400 条/Agent，样本不代表完整历史。", "Logs keep only the latest ~400 calls per agent; not full history.")}</Text>
     </View>
@@ -168,7 +168,7 @@ export function RecentPaceCard({ data, theme, locale }: CardProps) {
         />
         <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, `合计 ${formatTokens(sum(series.map((point) => point.value)))}`, `Total ${formatTokens(sum(series.map((point) => point.value)))}`)}</Text>
       </View>
-      <TrendChart theme={theme} points={series} color="#C07A4E" format={formatTokens} height={104} average={false} />
+      <TrendChart theme={theme} points={series} color={TOKEN_COLORS.output} format={formatTokens} height={104} average={false} />
       <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "按调用发生时间分桶，不是实时流；扫描间隔决定数据新鲜度。", "Buckets by call time, not a live stream; the scan interval sets how fresh the data is.")}</Text>
     </View>
   );
@@ -257,9 +257,9 @@ function Pager({ theme, locale, page, totalPages, onChange }: { theme: CardProps
   if (totalPages <= 1) return null;
   return (
     <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, paddingTop: 6 }}>
-      <Text onPress={page > 0 ? () => onChange(page - 1) : undefined} style={{ fontSize: 10, color: page > 0 ? theme.colors.foreground : theme.colors.foregroundMuted }}>{pick(locale, "← 上一页", "← Prev")}</Text>
+      <Text accessibilityRole="button" accessibilityLabel={pick(locale, "上一页", "Previous page")} onPress={page > 0 ? () => onChange(page - 1) : undefined} style={{ fontSize: 10, color: page > 0 ? theme.colors.foreground : theme.colors.foregroundMuted }}>{pick(locale, "← 上一页", "← Prev")}</Text>
       <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{`${page + 1} / ${totalPages}`}</Text>
-      <Text onPress={page < totalPages - 1 ? () => onChange(page + 1) : undefined} style={{ fontSize: 10, color: page < totalPages - 1 ? theme.colors.foreground : theme.colors.foregroundMuted }}>{pick(locale, "下一页 →", "Next →")}</Text>
+      <Text accessibilityRole="button" accessibilityLabel={pick(locale, "下一页", "Next page")} onPress={page < totalPages - 1 ? () => onChange(page + 1) : undefined} style={{ fontSize: 10, color: page < totalPages - 1 ? theme.colors.foreground : theme.colors.foregroundMuted }}>{pick(locale, "下一页 →", "Next →")}</Text>
     </View>
   );
 }

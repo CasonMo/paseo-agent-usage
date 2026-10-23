@@ -4,6 +4,9 @@
 var import_node_os5 = require("os");
 var import_node_path7 = require("path");
 
+// server/scan/scanner.ts
+var import_promises3 = require("fs/promises");
+
 // server/scan/claude.ts
 var import_node_os = require("os");
 var import_node_path3 = require("path");
@@ -11,7 +14,7 @@ var import_node_path3 = require("path");
 // server/scan/state.ts
 var import_promises = require("fs/promises");
 var import_node_path = require("path");
-var STATE_VERSION = 11;
+var STATE_VERSION = 13;
 var SESSION_KEEP_LIMIT = 8e3;
 function pruneSessions(sessions) {
   for (const key of Object.keys(sessions)) {
@@ -44,6 +47,7 @@ function applySession(sessions, harness, sid, delta) {
   entry.cost += delta.cost ?? 0;
   entry.credits += delta.credits ?? 0;
   if (delta.p) entry.p = delta.p;
+  if (delta.title && !entry.title) entry.title = delta.title;
   if (typeof delta.t === "number" && Number.isFinite(delta.t)) {
     if (delta.t < entry.s) entry.s = delta.t;
     if (delta.t > entry.e) entry.e = delta.t;
@@ -57,7 +61,7 @@ function emptyState() {
     sessions: {},
     files: {},
     recent: {},
-    opencode: { watermark: 0 },
+    opencode: { watermark: 0, lastId: "" },
     pi: { seen: [] },
     hosts: {},
     meta: { lastScanAt: null, scanError: null }
@@ -104,23 +108,71 @@ function recordCall(state, harness, record, replaceId) {
   list.push(record);
   if (list.length > MAX_RECENT_PER_AGENT) list.splice(0, list.length - MAX_RECENT_PER_AGENT);
 }
+function finite(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+function sanitizeBuckets(raw) {
+  const buckets = {};
+  if (!raw || typeof raw !== "object") return buckets;
+  for (const [key, value] of Object.entries(raw)) {
+    if (!value || typeof value !== "object") continue;
+    const record = value;
+    buckets[key] = {
+      r: finite(record.r),
+      i: finite(record.i),
+      o: finite(record.o),
+      cr: finite(record.cr),
+      cw: finite(record.cw),
+      rz: finite(record.rz),
+      cost: finite(record.cost),
+      credits: finite(record.credits)
+    };
+  }
+  return buckets;
+}
+function sanitizeSessions(raw) {
+  const sessions = {};
+  if (!raw || typeof raw !== "object") return sessions;
+  for (const [key, value] of Object.entries(raw)) {
+    if (!value || typeof value !== "object") continue;
+    const record = value;
+    sessions[key] = {
+      s: finite(record.s),
+      e: finite(record.e),
+      r: finite(record.r),
+      i: finite(record.i),
+      o: finite(record.o),
+      cr: finite(record.cr),
+      cw: finite(record.cw),
+      rz: finite(record.rz),
+      cost: finite(record.cost),
+      credits: finite(record.credits),
+      p: typeof record.p === "string" ? record.p : "",
+      title: typeof record.title === "string" ? record.title : void 0
+    };
+  }
+  return sessions;
+}
 async function loadState(dir) {
-  var _a, _b, _c, _d;
+  var _a, _b, _c, _d, _e;
   try {
     const text = await (0, import_promises.readFile)((0, import_node_path.join)(dir, "state.json"), "utf8");
     const parsed = JSON.parse(text);
     if (!parsed || typeof parsed !== "object" || parsed.version !== STATE_VERSION) return emptyState();
     const state = emptyState();
-    state.buckets = parsed.buckets ?? {};
-    state.sessions = parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {};
+    state.buckets = sanitizeBuckets(parsed.buckets);
+    state.sessions = sanitizeSessions(parsed.sessions);
     state.files = parsed.files ?? {};
     state.recent = parsed.recent ?? {};
-    state.opencode = { watermark: typeof ((_a = parsed.opencode) == null ? void 0 : _a.watermark) === "number" ? parsed.opencode.watermark : 0 };
-    state.pi = { seen: Array.isArray((_b = parsed.pi) == null ? void 0 : _b.seen) ? parsed.pi.seen.filter((k) => typeof k === "string") : [] };
+    state.opencode = {
+      watermark: finite((_a = parsed.opencode) == null ? void 0 : _a.watermark),
+      lastId: typeof ((_b = parsed.opencode) == null ? void 0 : _b.lastId) === "string" ? parsed.opencode.lastId : ""
+    };
+    state.pi = { seen: Array.isArray((_c = parsed.pi) == null ? void 0 : _c.seen) ? parsed.pi.seen.filter((k) => typeof k === "string") : [] };
     state.hosts = parsed.hosts ?? {};
     state.meta = {
-      lastScanAt: typeof ((_c = parsed.meta) == null ? void 0 : _c.lastScanAt) === "number" ? parsed.meta.lastScanAt : null,
-      scanError: typeof ((_d = parsed.meta) == null ? void 0 : _d.scanError) === "string" ? parsed.meta.scanError : null
+      lastScanAt: typeof ((_d = parsed.meta) == null ? void 0 : _d.lastScanAt) === "number" ? parsed.meta.lastScanAt : null,
+      scanError: typeof ((_e = parsed.meta) == null ? void 0 : _e.scanError) === "string" ? parsed.meta.scanError : null
     };
     return state;
   } catch {
@@ -145,6 +197,25 @@ var import_promises2 = require("fs/promises");
 var import_node_path2 = require("path");
 function num(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+function clipTitle(text) {
+  if (typeof text !== "string") return "";
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  const chars = [...clean];
+  return chars.length > 60 ? `${chars.slice(0, 60).join("")}\u2026` : clean;
+}
+var MACHINE_LABEL = /^(# AGENTS\.md|<environment_context|<user_instructions|<permissions|<chat-history-summary|<paseo-system|<paseo-agent|this session is being continued|caveat: the messages below)/i;
+function firstMessageText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  for (const block of content) {
+    if (block && typeof block === "object" && typeof block.text === "string") {
+      const kind = block.type;
+      if (kind === "text" || kind === "input_text") return block.text;
+    }
+  }
+  return "";
 }
 function localDateKey(ms) {
   const date = new Date(ms);
@@ -218,11 +289,25 @@ function claudeRoots(env = process.env) {
 async function scanClaudeFile(state, path) {
   const previousState = state.files[path];
   const recent = /* @__PURE__ */ new Map();
+  let sessionTitle = (previousState == null ? void 0 : previousState.sessionTitle) ?? "";
   if (previousState == null ? void 0 : previousState.recent) {
     for (const contribution of previousState.recent) recent.set(contribution.id, contribution);
   }
   const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
-    var _a;
+    var _a, _b;
+    if (!line.includes('"sessionId"')) return;
+    if (line.includes('"type":"user"')) {
+      try {
+        const entry2 = JSON.parse(line);
+        if ((entry2 == null ? void 0 : entry2.type) === "user") {
+          const raw = firstMessageText((_a = entry2.message) == null ? void 0 : _a.content);
+          const text = raw && !MACHINE_LABEL.test(raw.trim()) ? clipTitle(raw) : "";
+          if (text && !sessionTitle) sessionTitle = text;
+          return;
+        }
+      } catch {
+      }
+    }
     if (!line.includes('"usage"') || !line.includes('"assistant"')) return;
     let entry;
     try {
@@ -248,7 +333,7 @@ async function scanClaudeFile(state, path) {
       o: num(usage.output_tokens),
       cr: num(usage.cache_read_input_tokens),
       cw: num(usage.cache_creation_input_tokens),
-      rz: num((_a = usage.output_tokens_details) == null ? void 0 : _a.thinking_tokens)
+      rz: num((_b = usage.output_tokens_details) == null ? void 0 : _b.thinking_tokens)
     };
     if (id && recent.has(id)) {
       const before = recent.get(id);
@@ -292,7 +377,8 @@ async function scanClaudeFile(state, path) {
       o: contribution.o,
       cr: contribution.cr,
       cw: contribution.cw,
-      rz: contribution.rz
+      rz: contribution.rz,
+      title: sessionTitle || void 0
     });
     recordCall(
       state,
@@ -316,6 +402,7 @@ async function scanClaudeFile(state, path) {
   });
   if (!result) return;
   const fileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs };
+  if (sessionTitle) fileState.sessionTitle = sessionTitle;
   if (recent.size > 0) fileState.recent = [...recent.values()].slice(-96);
   state.files[path] = fileState;
 }
@@ -335,10 +422,28 @@ async function scanCodexFile(state, path) {
   let project = (previousState == null ? void 0 : previousState.project) ?? "";
   let model = (previousState == null ? void 0 : previousState.model) ?? "";
   let session = (previousState == null ? void 0 : previousState.session) ?? "";
+  let title = (previousState == null ? void 0 : previousState.sessionTitle) ?? "";
   let totals = (previousState == null ? void 0 : previousState.totals) ?? null;
   let fork = (previousState == null ? void 0 : previousState.codexFork) ?? { forked: false, point: null, baselineDone: false, firstTs: null };
   const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
     var _a, _b;
+    if (!title && (line.includes('"response_item"') || line.includes('"user_message"'))) {
+      try {
+        const entry2 = JSON.parse(line);
+        const payload = entry2 == null ? void 0 : entry2.payload;
+        if ((payload == null ? void 0 : payload.type) === "user_message") {
+          const text = clipTitle(payload.message);
+          if (text) title = text;
+        } else if ((payload == null ? void 0 : payload.type) === "message" && payload.role === "user") {
+          const text = firstMessageText(payload.content);
+          if (text && !MACHINE_LABEL.test(text)) {
+            const label = clipTitle(text);
+            if (label) title = label;
+          }
+        }
+      } catch {
+      }
+    }
     if (line.includes('"session_meta"')) {
       try {
         const entry2 = JSON.parse(line);
@@ -413,6 +518,7 @@ async function scanCodexFile(state, path) {
               t: ts,
               r: 1,
               p: project,
+              title: title || void 0,
               i: input2,
               o: lOutput,
               cr: lCached,
@@ -473,6 +579,7 @@ async function scanCodexFile(state, path) {
       t: ts,
       r: 1,
       p: project,
+      title: title || void 0,
       i: input,
       o: dOutput,
       cr: dCached,
@@ -495,6 +602,7 @@ async function scanCodexFile(state, path) {
   });
   if (!result) return;
   const fileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, model, session };
+  if (title) fileState.sessionTitle = title;
   if (totals) fileState.totals = totals;
   if (fork.forked) fileState.codexFork = fork;
   state.files[path] = fileState;
@@ -535,20 +643,33 @@ async function scanOpencode(state) {
   try {
     try {
       db = new sqlite.DatabaseSync(path, { readOnly: true });
-    } catch {
-      db = new sqlite.DatabaseSync(path);
-      db.exec("PRAGMA query_only = ON;");
+    } catch (error) {
+      console.warn("[agent-usage] opencode skipped: cannot open the database read-only", error);
+      return;
     }
-    let watermark = state.opencode.watermark;
+    let cursorTime = state.opencode.watermark;
+    let cursorId = state.opencode.lastId ?? "";
+    const sessionTitles = /* @__PURE__ */ new Map();
+    try {
+      const titleStatement = db.prepare("SELECT id, title FROM session WHERE title IS NOT NULL AND title <> ''");
+      for (const row of titleStatement.all()) {
+        if (typeof row.id === "string" && typeof row.title === "string") sessionTitles.set(row.id, clipTitle(row.title));
+      }
+    } catch {
+    }
     const statement = db.prepare(
-      "SELECT id, session_id, time_created, time_updated, data FROM message WHERE time_updated > ? ORDER BY time_updated ASC LIMIT 4000"
+      "SELECT id, session_id, time_created, time_updated, data FROM message WHERE time_updated > ? OR (time_updated = ? AND id > ?) ORDER BY time_updated ASC, id ASC LIMIT 4000"
     );
     for (let batch = 0; batch < 500; batch += 1) {
-      const rows = statement.all(watermark);
+      const rows = statement.all(cursorTime, cursorTime, cursorId);
       if (rows.length === 0) break;
       for (const row of rows) {
+        const id = typeof row.id === "string" ? row.id : "";
         const updated = num(row.time_updated);
-        if (updated > watermark) watermark = updated;
+        if (updated > cursorTime || updated === cursorTime && id > cursorId) {
+          cursorTime = updated;
+          cursorId = id;
+        }
         let data;
         try {
           data = JSON.parse(row.data);
@@ -569,6 +690,7 @@ async function scanOpencode(state) {
         const model = typeof data.modelID === "string" && data.modelID ? data.modelID : "unknown";
         const project = typeof ((_b = data.path) == null ? void 0 : _b.cwd) === "string" ? data.path.cwd : "";
         const outputWithReasoning = output + reasoning;
+        const sid = typeof row.session_id === "string" ? row.session_id : "";
         addBucket(state.buckets, localHourKey(ts), OPENCODE, model, project, {
           r: 1,
           i: input,
@@ -578,7 +700,7 @@ async function scanOpencode(state) {
           rz: reasoning,
           cost
         });
-        applySession(state.sessions, OPENCODE, typeof row.session_id === "string" ? row.session_id : "", {
+        applySession(state.sessions, OPENCODE, sid, {
           t: ts,
           r: 1,
           p: project,
@@ -587,13 +709,14 @@ async function scanOpencode(state) {
           cr: cacheRead,
           cw: cacheWrite,
           rz: reasoning,
-          cost
+          cost,
+          title: sessionTitles.get(sid)
         });
         recordCall(state, OPENCODE, {
           t: ts,
           m: model,
           p: project,
-          s: typeof row.session_id === "string" ? row.session_id : "",
+          s: sid,
           i: input,
           o: outputWithReasoning,
           cr: cacheRead,
@@ -605,7 +728,8 @@ async function scanOpencode(state) {
       }
       if (rows.length < 4e3) break;
     }
-    state.opencode.watermark = watermark;
+    state.opencode.watermark = cursorTime;
+    state.opencode.lastId = cursorId;
   } finally {
     db == null ? void 0 : db.close();
   }
@@ -616,6 +740,7 @@ var import_node_os4 = require("os");
 var import_node_path6 = require("path");
 var PI = "pi";
 var PI_SEEN_LIMIT = 4e5;
+var seenCache = /* @__PURE__ */ new WeakMap();
 function piRoots(env = process.env) {
   var _a, _b;
   const home = (0, import_node_os4.homedir)();
@@ -629,12 +754,25 @@ function piRoots(env = process.env) {
 async function scanPiFile(state, path) {
   const previousState = state.files[path];
   let project = (previousState == null ? void 0 : previousState.project) ?? "";
+  let title = (previousState == null ? void 0 : previousState.sessionTitle) ?? "";
   const base = path.split("/").pop() ?? "";
   const underscore = base.lastIndexOf("_");
   const session = (underscore >= 0 ? base.slice(underscore + 1) : base).replace(/\.jsonl$/, "");
-  const seen = new Set(state.pi.seen);
+  const cached = seenCache.get(state);
+  const ledger = !cached || cached.keys !== state.pi.seen ? { keys: state.pi.seen, set: new Set(state.pi.seen) } : cached;
+  seenCache.set(state, ledger);
+  const seen = ledger.set;
   const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
-    var _a;
+    var _a, _b;
+    if (line.includes('"role":"user"')) {
+      try {
+        const entry2 = JSON.parse(line);
+        const raw = (entry2 == null ? void 0 : entry2.type) === "message" && ((_a = entry2.message) == null ? void 0 : _a.role) === "user" ? firstMessageText(entry2.message.content) : "";
+        const text = raw && !MACHINE_LABEL.test(raw.trim()) ? clipTitle(raw) : "";
+        if (text && !title) title = text;
+      } catch {
+      }
+    }
     if (!project && line.includes('"type":"session"')) {
       try {
         const entry2 = JSON.parse(line);
@@ -665,7 +803,7 @@ async function scanPiFile(state, path) {
       seen.add(key);
       state.pi.seen.push(key);
     }
-    const cost = typeof ((_a = usage.cost) == null ? void 0 : _a.total) === "number" && usage.cost.total > 0 ? usage.cost.total : 0;
+    const cost = typeof ((_b = usage.cost) == null ? void 0 : _b.total) === "number" && usage.cost.total > 0 ? usage.cost.total : 0;
     const model = typeof message.model === "string" && message.model ? message.model : "unknown";
     const input = num(usage.input);
     const output = num(usage.output);
@@ -685,6 +823,7 @@ async function scanPiFile(state, path) {
       t: ts,
       r: 1,
       p: project,
+      title: title || void 0,
       i: input,
       o: output,
       cr: cacheRead,
@@ -708,13 +847,18 @@ async function scanPiFile(state, path) {
   });
   if (!result) return;
   if (state.pi.seen.length > PI_SEEN_LIMIT) {
-    state.pi.seen = state.pi.seen.slice(-PI_SEEN_LIMIT);
+    const removed = state.pi.seen.splice(0, state.pi.seen.length - PI_SEEN_LIMIT);
+    for (const key of removed) seen.delete(key);
   }
-  state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project };
+  state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, sessionTitle: title || void 0 };
 }
 
 // server/scan/scanner.ts
 async function scanAll(state, callbacks, enabledHarnesses) {
+  if (await filesShrank(state)) {
+    console.warn("[agent-usage] log file shrank; resetting counters and rescanning from zero");
+    resetCounters(state);
+  }
   const on = (id) => !enabledHarnesses || enabledHarnesses.has(id);
   const [claudeFiles, piFiles, codexFiles] = await Promise.all([
     collectRoots(claudeRoots()),
@@ -766,6 +910,25 @@ async function collectRoots(roots) {
     for (const file of await listJsonlFiles(root)) seen.add(file);
   }
   return [...seen].sort();
+}
+async function filesShrank(state) {
+  for (const [path, file] of Object.entries(state.files)) {
+    if (!file || !(file.offset > 0)) continue;
+    try {
+      const info = await (0, import_promises3.stat)(path);
+      if (info.isFile() && info.size < file.offset) return true;
+    } catch {
+    }
+  }
+  return false;
+}
+function resetCounters(state) {
+  state.buckets = {};
+  state.sessions = {};
+  state.files = {};
+  state.recent = {};
+  state.opencode = { watermark: 0, lastId: "" };
+  state.pi = { seen: [] };
 }
 
 // server/remote/collector.ts

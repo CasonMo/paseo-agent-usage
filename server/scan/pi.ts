@@ -14,6 +14,9 @@ export const PI = "pi";
  */
 const PI_SEEN_LIMIT = 400_000;
 
+/** Reuse the dedup lookup across files in one scan; rebuilt if the ledger array is replaced. */
+const seenCache = new WeakMap<ScanState, { keys: string[]; set: Set<string> }>();
+
 export function piRoots(env: NodeJS.ProcessEnv = process.env): string[] {
   const home = homedir();
   const roots: string[] = [];
@@ -31,7 +34,10 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
   const base = path.split("/").pop() ?? "";
   const underscore = base.lastIndexOf("_");
   const session = (underscore >= 0 ? base.slice(underscore + 1) : base).replace(/\.jsonl$/, "");
-  const seen = new Set(state.pi.seen);
+  const cached = seenCache.get(state);
+  const ledger = !cached || cached.keys !== state.pi.seen ? { keys: state.pi.seen, set: new Set(state.pi.seen) } : cached;
+  seenCache.set(state, ledger);
+  const seen = ledger.set;
   const result = await forEachNewLine(path, previousState?.offset ?? 0, (line) => {
     if (line.includes('"role":"user"')) {
       try {
@@ -121,7 +127,8 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
   });
   if (!result) return;
   if (state.pi.seen.length > PI_SEEN_LIMIT) {
-    state.pi.seen = state.pi.seen.slice(-PI_SEEN_LIMIT);
+    const removed = state.pi.seen.splice(0, state.pi.seen.length - PI_SEEN_LIMIT);
+    for (const key of removed) seen.delete(key);
   }
   state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, sessionTitle: title || undefined };
 }

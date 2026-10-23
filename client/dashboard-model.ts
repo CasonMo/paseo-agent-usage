@@ -570,7 +570,7 @@ export function addPage(config: DashboardConfig, name: string, fromPageId?: stri
     : [];
   const page: DashboardPage = {
     id: `custom-${newIid()}`,
-    name: name.trim().slice(0, 40) || "我的看板",
+    name: name.trim().slice(0, 40),
     builtin: false,
     cards: copied,
   };

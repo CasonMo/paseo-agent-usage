@@ -67,11 +67,12 @@ export async function scanOpencode(state: ScanState): Promise<void> {
   try {
     try {
       db = new sqlite.DatabaseSync(path, { readOnly: true });
-    } catch {
-      db = new sqlite.DatabaseSync(path);
-      db.exec("PRAGMA query_only = ON;");
+    } catch (error) {
+      console.warn("[agent-usage] opencode skipped: cannot open the database read-only", error);
+      return;
     }
-    let watermark = state.opencode.watermark;
+    let cursorTime = state.opencode.watermark;
+    let cursorId = state.opencode.lastId ?? "";
     const sessionTitles = new Map<string, string>();
     try {
       const titleStatement = db.prepare("SELECT id, title FROM session WHERE title IS NOT NULL AND title <> ''");
@@ -82,14 +83,20 @@ export async function scanOpencode(state: ScanState): Promise<void> {
       /* older schema without the title column */
     }
     const statement = db.prepare(
-      "SELECT id, session_id, time_created, time_updated, data FROM message WHERE time_updated > ? ORDER BY time_updated ASC LIMIT 4000",
+      "SELECT id, session_id, time_created, time_updated, data FROM message WHERE time_updated > ? OR (time_updated = ? AND id > ?) ORDER BY time_updated ASC, id ASC LIMIT 4000",
     );
     for (let batch = 0; batch < 500; batch += 1) {
-      const rows = statement.all(watermark) as unknown as MessageRow[];
+      const rows = statement.all(cursorTime, cursorTime, cursorId) as unknown as MessageRow[];
       if (rows.length === 0) break;
       for (const row of rows) {
+        const id = typeof row.id === "string" ? row.id : "";
         const updated = num(row.time_updated);
-        if (updated > watermark) watermark = updated;
+        // Advance the cursor for every row, including ones we skip, so a
+        // non-usage row can never wedge the scanner on the same batch.
+        if (updated > cursorTime || (updated === cursorTime && id > cursorId)) {
+          cursorTime = updated;
+          cursorId = id;
+        }
         let data: any;
         try {
           data = JSON.parse(row.data);
@@ -151,7 +158,8 @@ export async function scanOpencode(state: ScanState): Promise<void> {
       }
       if (rows.length < 4000) break;
     }
-    state.opencode.watermark = watermark;
+    state.opencode.watermark = cursorTime;
+    state.opencode.lastId = cursorId;
   } finally {
     db?.close();
   }

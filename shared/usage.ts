@@ -305,6 +305,7 @@ export const usageAgentRpc = defineRpc({
 
 export const hostFormSchema = z.object({
   name: z.string(),
+  originalName: z.string().nullable().optional(),
   target: z.string(),
   enabled: z.boolean(),
   port: z.number().nullable(),

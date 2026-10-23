@@ -883,7 +883,7 @@ export function CalendarDots({
           <View style={{ flexDirection: "row", gap }}>
             <View style={{ width: 16, gap }}>
               {(locale === "zh" ? ["一", "二", "三", "四", "五", "六", "日"] : ["M", "T", "W", "T", "F", "S", "S"]).map((label, index) => (
-                <Text key={label} style={{ height: cell, lineHeight: cell, fontSize: 7, color: theme.colors.foregroundMuted, opacity: index % 2 === 0 ? 1 : 0 }}>{label}</Text>
+                <Text key={index} style={{ height: cell, lineHeight: cell, fontSize: 7, color: theme.colors.foregroundMuted, opacity: index % 2 === 0 ? 1 : 0 }}>{label}</Text>
               ))}
             </View>
             {Array.from({ length: weeks }, (_, week) => (
@@ -935,7 +935,7 @@ export function Punchcard({ theme, matrix, values, color, compact = false, local
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap }}>
         <View style={{ gap }}>
           {(locale === "zh" ? ["一", "二", "三", "四", "五", "六", "日"] : ["M", "T", "W", "T", "F", "S", "S"]).map((label, weekday) => (
-            <View key={label} style={{ flexDirection: "row", alignItems: "center", gap }}>
+            <View key={weekday} style={{ flexDirection: "row", alignItems: "center", gap }}>
               <Text style={{ width: 14, fontSize: 8, color: theme.colors.foregroundMuted }}>{label}</Text>
               {Array.from({ length: 24 }, (_, hour) => {
                 const index = weekday * 24 + hour;

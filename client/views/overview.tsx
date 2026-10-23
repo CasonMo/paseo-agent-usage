@@ -9,6 +9,7 @@ import {
   downsampleSeries,
   forecastSeries,
   hitOf,
+  originLabel,
   originStatus,
   originSync,
   percentText,
@@ -343,7 +344,7 @@ export function AgentShareCard({ data, theme, locale }: CardProps) {
   const rows = agents.map((agent) => ({
     key: agent.id,
     label: agent.label,
-    sub: `${formatTokens(agent.totalTokens)} tok · ${formatCount(agent.requests)} req`,
+    sub: `${formatTokens(agent.totalTokens)} tok · ${formatCount(agent.requests)} ${pick(locale, "次", "req")}`,
     value: metric === "tokens" ? agent.totalTokens : metric === "requests" ? agent.requests : agent.reportedCostUsd,
     color: agentColor(agent.id),
   }));
@@ -397,7 +398,7 @@ export function HostCompareCard({ data, theme, locale }: CardProps) {
   const total = sum(origins.map((origin) => (metric === "tokens" ? origin.totalTokens : origin.requests)));
   const rows = origins.map((origin, index) => ({
     key: origin.id,
-    label: origin.label,
+    label: originLabel(origin, locale),
     sub: `${originStatus(locale, origin.status)} · ${originSync(locale, origin)}`,
     value: metric === "tokens" ? origin.totalTokens : origin.requests,
     color: index === 0 ? agentColor("claude") : index === 1 ? agentColor("codex") : agentColor("opencode"),

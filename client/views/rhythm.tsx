@@ -145,7 +145,7 @@ export function WeekdayCard({ data, theme, locale, compact }: CardProps) {
         format={formatter}
         height={116}
         average={false}
-        compact
+        compact={compact}
       />
     </View>
   );

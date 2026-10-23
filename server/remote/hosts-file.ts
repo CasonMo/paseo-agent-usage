@@ -10,6 +10,7 @@ import { parseHostsConfig, type HostConfig } from "./ssh";
  */
 export interface HostForm {
   name: string;
+  originalName?: string | null;
   target: string;
   enabled: boolean;
   port: number | null;
@@ -41,13 +42,17 @@ export function applyHostForms(existing: HostConfig[], forms: HostForm[]): { hos
     const name = form.name.trim();
     const target = form.target.trim();
     if (!name || !target) return { hosts: [], error: st("每台主机都需要填写名称和地址（target）", "Each host needs a name and a target") };
+    if (target.startsWith("-")) return { hosts: [], error: st("主机地址不能以 - 开头", "A host target cannot start with -") };
     if (seen.has(name)) return { hosts: [], error: st(`主机名重复：${name}`, `Duplicate host name: ${name}`) };
     seen.add(name);
-    const previous = existing.find((host) => host.name === name);
+    const previousName = form.originalName?.trim() || name;
+    const previous = existing.find((host) => host.name === previousName);
+    const passwordCommand = trimOrUndefined(form.passwordCommand);
     let password: string | undefined;
     if (form.password === undefined) password = previous?.password;
     else if (form.password === "") password = undefined;
     else password = form.password;
+    if (passwordCommand) password = undefined;
     hosts.push({
       name,
       target,
@@ -55,7 +60,7 @@ export function applyHostForms(existing: HostConfig[], forms: HostForm[]): { hos
       port: form.port ?? undefined,
       identityFile: trimOrUndefined(form.identityFile),
       password,
-      passwordCommand: trimOrUndefined(form.passwordCommand),
+      passwordCommand,
       nodePath: trimOrUndefined(form.nodePath),
       cacheDir: trimOrUndefined(form.cacheDir),
       timeoutMs: form.timeoutMs ?? undefined,

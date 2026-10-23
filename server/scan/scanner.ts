@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { claudeRoots, scanClaudeFile } from "./claude";
 import { codexRoots, scanCodexFile } from "./codex";
 import { scanOpencode } from "./opencode";
@@ -12,6 +13,10 @@ export interface ScanCallbacks {
 }
 
 export async function scanAll(state: ScanState, callbacks: ScanCallbacks, enabledHarnesses?: ReadonlySet<string>): Promise<void> {
+  if (await filesShrank(state)) {
+    console.warn("[agent-usage] log file shrank; resetting counters and rescanning from zero");
+    resetCounters(state);
+  }
   const on = (id: string) => !enabledHarnesses || enabledHarnesses.has(id);
   const [claudeFiles, piFiles, codexFiles] = await Promise.all([
     collectRoots(claudeRoots()),
@@ -68,4 +73,27 @@ async function collectRoots(roots: string[]): Promise<string[]> {
     for (const file of await listJsonlFiles(root)) seen.add(file);
   }
   return [...seen].sort();
+}
+
+/** True when a tracked file became smaller than the offset we already consumed. */
+async function filesShrank(state: ScanState): Promise<boolean> {
+  for (const [path, file] of Object.entries(state.files)) {
+    if (!file || !(file.offset > 0)) continue;
+    try {
+      const info = await stat(path);
+      if (info.isFile() && info.size < file.offset) return true;
+    } catch {
+      // Deleted files keep their already-counted history.
+    }
+  }
+  return false;
+}
+
+function resetCounters(state: ScanState): void {
+  state.buckets = {};
+  state.sessions = {};
+  state.files = {};
+  state.recent = {};
+  state.opencode = { watermark: 0, lastId: "" };
+  state.pi = { seen: [] };
 }

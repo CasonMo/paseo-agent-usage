@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
-export const STATE_VERSION = 12;
+export const STATE_VERSION = 13;
 
 /** Usage aggregate for one hour bucket. Bucket keys start with an hour key `YYYY-MM-DDTHH`. */
 export interface UsageBucket {
@@ -164,7 +164,7 @@ export interface ScanState {
   sessions: Record<string, SessionEntry>;
   files: Record<string, FileState>;
   recent: Record<string, CallRecord[]>;
-  opencode: { watermark: number };
+  opencode: { watermark: number; lastId: string };
   /**
    * Pi cross-file dedup ledger: "entryId@timestamp" keys of every counted
    * message. Pi fork / sub-run files copy messages from their parent, so the
@@ -185,7 +185,7 @@ export function emptyState(): ScanState {
     sessions: {},
     files: {},
     recent: {},
-    opencode: { watermark: 0 },
+    opencode: { watermark: 0, lastId: "" },
     pi: { seen: [] },
     hosts: {},
     meta: { lastScanAt: null, scanError: null },
@@ -270,18 +270,68 @@ export function recordCall(state: ScanState, harness: string, record: CallRecord
   if (list.length > MAX_RECENT_PER_AGENT) list.splice(0, list.length - MAX_RECENT_PER_AGENT);
 }
 
+function finite(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function sanitizeBuckets(raw: unknown): Record<string, UsageBucket> {
+  const buckets: Record<string, UsageBucket> = {};
+  if (!raw || typeof raw !== "object") return buckets;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const record = value as Record<string, unknown>;
+    buckets[key] = {
+      r: finite(record.r),
+      i: finite(record.i),
+      o: finite(record.o),
+      cr: finite(record.cr),
+      cw: finite(record.cw),
+      rz: finite(record.rz),
+      cost: finite(record.cost),
+      credits: finite(record.credits),
+    };
+  }
+  return buckets;
+}
+
+function sanitizeSessions(raw: unknown): Record<string, SessionEntry> {
+  const sessions: Record<string, SessionEntry> = {};
+  if (!raw || typeof raw !== "object") return sessions;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const record = value as Record<string, unknown>;
+    sessions[key] = {
+      s: finite(record.s),
+      e: finite(record.e),
+      r: finite(record.r),
+      i: finite(record.i),
+      o: finite(record.o),
+      cr: finite(record.cr),
+      cw: finite(record.cw),
+      rz: finite(record.rz),
+      cost: finite(record.cost),
+      credits: finite(record.credits),
+      p: typeof record.p === "string" ? record.p : "",
+      title: typeof record.title === "string" ? record.title : undefined,
+    };
+  }
+  return sessions;
+}
+
 export async function loadState(dir: string): Promise<ScanState> {
   try {
     const text = await readFile(join(dir, "state.json"), "utf8");
     const parsed = JSON.parse(text) as Partial<ScanState>;
     if (!parsed || typeof parsed !== "object" || parsed.version !== STATE_VERSION) return emptyState();
     const state = emptyState();
-    state.buckets = (parsed.buckets as ScanState["buckets"]) ?? {};
-    state.sessions =
-      parsed.sessions && typeof parsed.sessions === "object" ? (parsed.sessions as ScanState["sessions"]) : {};
+    state.buckets = sanitizeBuckets(parsed.buckets);
+    state.sessions = sanitizeSessions(parsed.sessions);
     state.files = (parsed.files as ScanState["files"]) ?? {};
     state.recent = (parsed.recent as ScanState["recent"]) ?? {};
-    state.opencode = { watermark: typeof parsed.opencode?.watermark === "number" ? parsed.opencode.watermark : 0 };
+    state.opencode = {
+      watermark: finite(parsed.opencode?.watermark),
+      lastId: typeof parsed.opencode?.lastId === "string" ? parsed.opencode.lastId : "",
+    };
     state.pi = { seen: Array.isArray(parsed.pi?.seen) ? (parsed.pi.seen as string[]).filter((k) => typeof k === "string") : [] };
     state.hosts = (parsed.hosts as ScanState["hosts"]) ?? {};
     state.meta = {

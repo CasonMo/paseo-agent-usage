@@ -328,7 +328,7 @@ export function ConfigScreen({ theme, layout, onBack }: PluginSurfaceProps & { o
         </View>
         <GeneralSection theme={theme} compact={compact} />
         <AgentsSection theme={theme} compact={compact} />
-        <HostsManager theme={theme} compact={compact} />
+        <HostsManager theme={theme} />
       </ScrollView>
     </View>
   );

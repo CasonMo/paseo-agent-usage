@@ -1,4 +1,5 @@
 import { PLUGIN_VERSION } from "../shared/version";
+import { st } from "./i18n";
 
 const RECORD_RAW = "https://raw.githubusercontent.com/getpaseo/plugins/main/plugins/casonmo/agent-usage.json";
 const RECORD_API = "https://api.github.com/repos/getpaseo/plugins/contents/plugins/casonmo/agent-usage.json";
@@ -60,7 +61,7 @@ async function fetchFirst(candidates: Array<{ url: string; accept?: string }>): 
       lastError = error;
     }
   }
-  throw lastError instanceof Error ? lastError : new Error("更新检查请求失败");
+  throw lastError instanceof Error ? lastError : new Error(st("更新检查请求失败", "Update check request failed"));
 }
 
 /** 读取 registry 记录（pin commit）→ 读取该 commit 的 package.json 版本 → 与本地版本比较 */
@@ -72,14 +73,14 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   ]);
   const record = JSON.parse(recordText) as { artifact?: { commit?: unknown } };
   const commit = typeof record.artifact?.commit === "string" ? record.artifact.commit : "";
-  if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("registry 记录缺少有效的 commit pin");
+  if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error(st("registry 记录缺少有效的 commit pin", "The registry record has no valid commit pin"));
   const packageText = await fetchFirst([
     { url: `${REPO_RAW}/${commit}/package.json` },
     { url: `${REPO_API}/package.json?ref=${commit}`, accept: "application/vnd.github.raw" },
   ]);
   const pkg = JSON.parse(packageText) as { version?: unknown };
   const latestVersion = typeof pkg.version === "string" ? pkg.version : "";
-  if (latestVersion.length === 0) throw new Error("pinned package.json 缺少版本号");
+  if (latestVersion.length === 0) throw new Error(st("pinned package.json 缺少版本号", "The pinned package.json has no version"));
   const result: UpdateCheckResult = {
     currentVersion: PLUGIN_VERSION,
     latestVersion,

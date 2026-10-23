@@ -1,9 +1,9 @@
 import { Text, View } from "react-native";
-import { agentColor } from "../agents";
+import { agentColor, COST_COLOR } from "../agents";
 import { activeDays, totalTokens } from "../dashboard-data";
 import { formatTokens, formatUsd } from "../format";
 import { BudgetBar, Empty, LedgerStrip, Radar } from "../visuals";
-import { originStatus, percentText, pick, type CardProps } from "./shared";
+import { originLabel, originStatus, percentText, pick, type CardProps } from "./shared";
 
 export function AgentRadarCard({ data, theme, locale, compact }: CardProps) {
   const agents = data.agents.filter((agent) => agent.totalTokens > 0).sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 4);
@@ -79,7 +79,7 @@ export function BudgetCard({ data, theme, locale, compact, budgetUsd = 0 }: Card
   return (
     <View style={{ gap: 8 }}>
       <LedgerStrip theme={theme} cells={cells} compact={compact} locale={locale} />
-      <BudgetBar theme={theme} ratio={ratio} color="#A9853F" />
+      <BudgetBar theme={theme} ratio={ratio} color={COST_COLOR} />
       <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "按本月至今的成本线性外推；只统计有成本上报的 Agent。", "Linearly projected from month-to-date cost; only agents that report cost.")}</Text>
     </View>
   );
@@ -102,7 +102,7 @@ export function CoverageCard({ data, theme, locale, compact }: CardProps) {
       />
       {data.origins.map((origin) => (
         <View key={origin.id} style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 5, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
-          <Text style={{ flex: 1, fontSize: 11, color: theme.colors.foreground }}>{origin.label}</Text>
+          <Text style={{ flex: 1, fontSize: 11, color: theme.colors.foreground }}>{originLabel(origin, locale)}</Text>
           <Text style={{ fontSize: 10, color: origin.status === "error" ? theme.colors.statusDanger : theme.colors.foregroundMuted }}>{originStatus(locale, origin.status)}</Text>
           <Text style={{ width: 64, textAlign: "right", fontSize: 10, color: theme.colors.foregroundMuted, fontVariant: ["tabular-nums"] }}>{formatTokens(origin.totalTokens)}</Text>
         </View>

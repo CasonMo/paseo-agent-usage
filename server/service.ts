@@ -464,13 +464,39 @@ export function createUsageService(): UsageService {
     await writeHostsFile(dir, hosts);
     hostConfigs = hosts;
     hostConfigsAt = Date.now();
-    const names = new Set(hosts.map((host) => host.name));
+    const renames = new Map<string, string>();
+    for (const form of forms) {
+      const from = form.originalName?.trim();
+      const to = form.name.trim();
+      if (from && to && from !== to) renames.set(to, from);
+    }
+    if (renames.size > 0) {
+      const moved = [...renames].flatMap(([to, from]) => {
+        const entry = state.hosts[from];
+        return entry ? [[to, entry] as const] : [];
+      });
+      for (const from of renames.values()) delete state.hosts[from];
+      for (const [to, entry] of moved) state.hosts[to] = entry;
+    }
+    const names = new Set(hosts.filter((host) => host.enabled).map((host) => host.name));
     for (const name of Object.keys(state.hosts)) {
       if (!names.has(name)) delete state.hosts[name];
     }
     for (const host of hosts) {
-      const before = existing.find((item) => item.name === host.name);
-      const changed = !before || before.target !== host.target || before.enabled !== host.enabled;
+      if (!host.enabled) continue;
+      const previousName = renames.get(host.name) ?? host.name;
+      const before = existing.find((item) => item.name === previousName);
+      const changed =
+        !before ||
+        before.target !== host.target ||
+        before.enabled !== host.enabled ||
+        before.port !== host.port ||
+        before.identityFile !== host.identityFile ||
+        before.password !== host.password ||
+        before.passwordCommand !== host.passwordCommand ||
+        before.nodePath !== host.nodePath ||
+        before.cacheDir !== host.cacheDir ||
+        before.timeoutMs !== host.timeoutMs;
       if (changed) {
         const entry = state.hosts[host.name];
         if (entry) entry.lastAttemptAt = null;
@@ -496,7 +522,8 @@ export function createUsageService(): UsageService {
   async function hostTest(form: UsageHostForm): Promise<{ ok: boolean; detail: string }> {
     await loaded;
     const existing = await readHostsFile(dir);
-    const previous = existing.find((host) => host.name === form.name.trim());
+    const previousName = form.originalName?.trim() || form.name.trim();
+    const previous = existing.find((host) => host.name === previousName);
     const { hosts, error } = applyHostForms(previous ? [previous] : [], [form]);
     if (error) return { ok: false, detail: error };
     const host = hosts[0];

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { buildAgentReport, buildReport } from "../server/report";
 import type { ScanState, UsageBucket } from "../server/scan/state";
+import { STATE_VERSION } from "../server/scan/state";
 
 const now = new Date();
 const dateKey = (date: Date): string => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -29,7 +30,7 @@ add(buckets, b(previous, "claude", "claude-test", "project-b"), bucket(1, 80, 20
 const sessionStart = current.getTime();
 const previousStart = previous.getTime();
 const state: ScanState = {
-  version: 12,
+  version: STATE_VERSION,
   buckets,
   sessions: {
     "codex\u0001s-current": { s: sessionStart, e: sessionStart + 30 * 60_000, r: 2, i: 100, o: 50, cr: 400, cw: 10, rz: 0, cost: 0.2, credits: 0, p: "project-a", title: "Current session" },
@@ -41,7 +42,7 @@ const state: ScanState = {
       { t: sessionStart, m: "gpt-test", p: "project-a", s: "s-current", i: 100, o: 50, cr: 400, cw: 10, rz: 0, cost: 0.2, credits: 0 },
     ],
   },
-  opencode: { watermark: 0 },
+  opencode: { watermark: 0, lastId: "" },
   pi: { seen: [] },
   hosts: {},
   meta: { lastScanAt: now.getTime(), scanError: null },

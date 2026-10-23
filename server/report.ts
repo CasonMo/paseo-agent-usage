@@ -585,7 +585,7 @@ function requestStatsOf(samples: readonly { ts: number; tokens: number; agent: s
   const values = samples.map((sample) => sample.tokens);
   const sorted = [...samples].sort((a, b) => b.ts - a.ts).slice(0, MAX_REQUEST_SCATTER).sort((a, b) => a.ts - b.ts);
   return {
-    sampled: sorted.length,
+    sampled: values.length,
     medianTokens: round0(percentile(values, 0.5)),
     p90Tokens: round0(percentile(values, 0.9)),
     histogram: histogram(values, REQUEST_EDGES),

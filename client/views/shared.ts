@@ -17,6 +17,11 @@ export function pick(locale: Locale, zh: string, en: string): string {
   return locale === "zh" ? zh : en;
 }
 
+/** The daemon labels the local origin in its own locale; localize it at render time. */
+export function originLabel(origin: Pick<UsageOrigin, "id" | "label">, locale: Locale): string {
+  return origin.id === "local" ? pick(locale, "本机", "Local") : origin.label;
+}
+
 export function sum(values: readonly number[]): number {
   return values.reduce((total, value) => total + (Number.isFinite(value) ? value : 0), 0);
 }
@@ -69,7 +74,7 @@ export function downsampleSeries(series: readonly UsageSeriesPoint[], limit: num
 }
 
 export function forecastSeries(series: readonly UsageSeriesPoint[], days = 7): UsageSeriesPoint[] {
-  if (series.length < 14) return [];
+  if (series.length < 7) return [];
   const daily = series.filter((point) => /^\d{4}-\d{2}-\d{2}$/.test(point.key)).slice(-28);
   if (daily.length < 7) return [];
   const firstDay = daily[0];

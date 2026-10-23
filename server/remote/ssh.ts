@@ -39,7 +39,7 @@ export function parseHostsConfig(text: string): HostConfig[] {
       const record = item as Record<string, unknown>;
       const name = typeof record.name === "string" && record.name.trim() ? record.name.trim() : null;
       const target = typeof record.target === "string" && record.target.trim() ? record.target.trim() : null;
-      if (!name || !target) continue;
+      if (!name || !target || target.startsWith("-")) continue;
       hosts.push({
         name,
         target,
@@ -78,7 +78,8 @@ async function ensureAskpass(pluginDataDir: string): Promise<string> {
 }
 
 async function resolvePassword(host: HostConfig): Promise<{ password: string | null; error: string | null }> {
-  if (host.password) return { password: host.password, error: null };
+  // passwordCommand is an explicit authentication choice; it must not be
+  // shadowed by a stale stored password.
   if (host.passwordCommand) {
     try {
       const { stdout } = await execCommand("/bin/sh", ["-c", host.passwordCommand], { timeout: 15000, maxBuffer: 1024 * 1024 });
@@ -88,6 +89,7 @@ async function resolvePassword(host: HostConfig): Promise<{ password: string | n
       return { password: null, error: st(`passwordCommand 执行失败（${host.name}）：${error instanceof Error ? error.message : String(error)}`, `passwordCommand failed (${host.name}): ${error instanceof Error ? error.message : String(error)}`) };
     }
   }
+  if (host.password) return { password: host.password, error: null };
   return { password: null, error: null };
 }
 
@@ -162,6 +164,7 @@ async function executeSsh(host: HostConfig, pluginDataDir: string, command: stri
       return;
     }
     let stdout = "";
+    let stdoutBytes = 0;
     let stderr = "";
     let settled = false;
     const finish = (result: HostPullResult) => {
@@ -179,7 +182,8 @@ async function executeSsh(host: HostConfig, pluginDataDir: string, command: stri
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
-      if (stdout.length > options.maxBytes) {
+      stdoutBytes += Buffer.byteLength(chunk);
+      if (stdoutBytes > options.maxBytes) {
         void terminateProcess(child).catch(() => {});
         finish({ ok: false, error: st("采集器输出超过大小上限", "Collector output exceeded the size limit"), stdout: "", stderr: stderr.slice(-400), exitCode: null });
       }

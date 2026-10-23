@@ -83,7 +83,7 @@ function groupModels(models: readonly UsageModelItem[]): RankGroup[] {
 function groupProjects(projects: readonly UsageProjectItem[]): RankGroup[] {
   return projects.map((project) => ({
     key: project.project || "unknown",
-    label: shortProject(project.project) || "unknown",
+    label: shortProject(project.project) || "—",
     value: project.totalTokens,
     requests: project.requests,
     cost: 0,

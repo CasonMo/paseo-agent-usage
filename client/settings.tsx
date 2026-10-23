@@ -74,7 +74,8 @@ function draftPassword(draft: HostDraft): string | undefined {
     if (draft.password.length > 0) return draft.password;
     return draft.hasPassword ? undefined : "";
   }
-  if (draft.passwordMode === "command") return draft.hasPassword ? undefined : "";
+  // Command and key modes must not leave a stored password behind, otherwise it
+  // keeps taking precedence over the newly selected authentication method.
   return "";
 }
 
@@ -83,6 +84,7 @@ function draftToPayload(draft: HostDraft) {
   const timeoutSec = Number.parseInt(draft.timeoutSec, 10);
   return {
     name: draft.name.trim(),
+    originalName: draft.originalName,
     target: draft.target.trim(),
     enabled: draft.enabled,
     port: Number.isFinite(port) && port > 0 ? port : null,
@@ -95,7 +97,7 @@ function draftToPayload(draft: HostDraft) {
   };
 }
 
-export function HostsManager({ theme, compact }: { theme: Theme; compact: boolean }) {
+export function HostsManager({ theme }: { theme: Theme }) {
   const queryClient = useQueryClient();
   const listCall = useRpc(usageHostsListRpc);
   const setCall = useRpc(usageHostsSetRpc);
@@ -126,7 +128,6 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
         buttonRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
         smallButton: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: theme.colors.surface1 },
         smallButtonText: { fontSize: 11, color: theme.colors.foreground },
-        smallButtonDanger: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, backgroundColor: theme.colors.surface1 },
         smallButtonDangerText: { fontSize: 11, color: theme.colors.statusDanger },
         primaryButton: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, backgroundColor: theme.colors.accent },
         primaryButtonText: { fontSize: 12, color: theme.colors.accentForeground, fontWeight: "600" },
@@ -153,7 +154,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
         testOk: { color: theme.colors.statusSuccess },
         testError: { color: theme.colors.statusDanger },
       }) satisfies Record<string, ViewStyle | TextStyle>,
-    [theme, compact],
+    [theme],
   );
 
   const { t } = useI18n();
@@ -285,7 +286,7 @@ export function HostsManager({ theme, compact }: { theme: Theme; compact: boolea
               >
                 <Text style={styles.smallButtonText}>{t("common.edit")}</Text>
               </Pressable>
-              <Pressable style={styles.smallButtonDanger} onPress={() => void removeHost(host.name)}>
+              <Pressable style={styles.smallButton} onPress={() => void removeHost(host.name)}>
                 <Text style={styles.smallButtonDangerText}>{t("common.delete")}</Text>
               </Pressable>
             </View>

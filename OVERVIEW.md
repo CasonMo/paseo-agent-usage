@@ -55,7 +55,7 @@
 - 写入：daemon 所在机器的插件数据目录（扫描状态与主机配置）；远端仅写增量缓存
 - 网络：插件自身的网络访问只有版本更新检查（每小时最多一次，仅读取公开的 registry 记录与对应提交的 package.json，来自 raw.githubusercontent.com、api.github.com，不发送任何数据）；SSH 采集通过系统 ssh 命令连接你配置的主机
 - 不读取、不保存、不发送任何登录凭据；不发送 prompts、代码或日志内容到任何服务
-- 支持 macOS 与 Linux；需要 Paseo 0.11.2 或更高版本
+- 支持 macOS 与 Linux；需要 Paseo 0.13.0-beta.1 或更高版本
 
 ---
 
@@ -116,4 +116,4 @@ Usage from other machines can be counted in as well. Two ways to configure it:
 - Writes: the plugin data directory on the daemon host (scan state and host configuration); on remotes only the incremental cache
 - Network: the plugin's own network access is only the update check (at most once an hour, reading only the public registry record and the pinned package.json from raw.githubusercontent.com and api.github.com, sending no data); SSH collection connects to your configured hosts through the system ssh command
 - No login credentials are read, stored, or sent; no prompts, code, or log content is sent to any service
-- Supports macOS and Linux; requires Paseo 0.11.2 or later
+- Supports macOS and Linux; requires Paseo 0.13.0-beta.1 or later

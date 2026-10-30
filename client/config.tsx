@@ -52,7 +52,7 @@ function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) 
     [theme, compact],
   );
 
-  const current = prefsQuery.data ?? { language: "auto" as LanguageMode, refreshMinutes: 30, localAlias: undefined };
+  const current: UsagePrefs = prefsQuery.data ?? { language: "auto", refreshMinutes: 30, coCreateDismissed: false };
   const [aliasDraft, setAliasDraft] = useState("");
   const [budgetDraft, setBudgetDraft] = useState("");
   useEffect(() => {

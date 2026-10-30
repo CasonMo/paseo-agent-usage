@@ -1,4 +1,6 @@
 import { openExternalUrl, type PluginScreenProps } from "@getpaseo/plugin/client";
+import { Icon, useToast } from "@getpaseo/plugin/client/ui";
+import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import type { TextStyle, ViewStyle } from "react-native";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -7,7 +9,7 @@ import { ConfigScreen } from "./config";
 import { Dashboard } from "./dashboard";
 import { fromAgentReport, fromReport } from "./dashboard-data";
 import { DateRangePicker } from "./date-range";
-import { useAgentReport, usePrefs, useRefreshUsage, useUpdateCheck, useUsageReport } from "./data";
+import { PREFS_QUERY_KEY, useAgentReport, usePrefs, useRefreshUsage, useSetPrefs, useUpdateCheck, useUsageReport } from "./data";
 import { detectSystemLocale, useI18n, type Translate } from "./i18n";
 import { ISSUE_URL, PULL_REQUEST_URL } from "./links";
 
@@ -60,8 +62,12 @@ export function UsageScreen(props: PluginScreenProps) {
   const [customTo, setCustomTo] = useState<string>("");
   const [showNotes, setShowNotes] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [dismissingCommunity, setDismissingCommunity] = useState(false);
   const [openSelect, setOpenSelect] = useState<SelectKey | null>(null);
   const [showCustomPicker, setShowCustomPicker] = useState(false);
+  const queryClient = useQueryClient();
+  const setPrefs = useSetPrefs();
+  const toast = useToast();
   const updateQuery = useUpdateCheck();
   const prefsQuery = usePrefs(detectSystemLocale());
   const deviceOrigin = device === "aggregate" ? undefined : device;
@@ -85,6 +91,27 @@ export function UsageScreen(props: PluginScreenProps) {
   }
   const refreshUsage = useRefreshUsage();
   const { t } = useI18n();
+
+  async function dismissCommunityBanner() {
+    const current = prefsQuery.data;
+    if (!current || dismissingCommunity) return;
+    setDismissingCommunity(true);
+    const next = { ...current, coCreateDismissed: true };
+    try {
+      await queryClient.cancelQueries({ queryKey: PREFS_QUERY_KEY });
+      const result = await setPrefs(next);
+      if (!result.saved) {
+        toast.error(result.error ?? t("community.dismissFailed"));
+        return;
+      }
+      queryClient.setQueryData(PREFS_QUERY_KEY, next);
+    } catch {
+      toast.error(t("community.dismissFailed"));
+    } finally {
+      setDismissingCommunity(false);
+    }
+  }
+
   const localLabel = prefsQuery.data?.localAlias || t("origin.local");
   const ranges = useMemo(() => RANGE_KEYS.map((key, index) => ({ key, label: t(RANGE_LABEL_KEYS[index]) })), [t]);
   const rangeDisplay = useMemo(() => {
@@ -113,42 +140,34 @@ export function UsageScreen(props: PluginScreenProps) {
         dateButton: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, backgroundColor: theme.colors.surface1, borderColor: theme.colors.border, borderWidth: 1 },
         dateButtonText: { fontSize: 10, color: theme.colors.foreground },
         communityBanner: {
-          flexDirection: compact ? "column" : "row",
-          alignItems: compact ? "stretch" : "center",
-          gap: 10,
-          backgroundColor: theme.colors.surface1,
+          flexDirection: "row",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: 8,
+          backgroundColor: theme.colors.surface2,
           borderColor: theme.colors.border,
           borderLeftColor: theme.colors.accent,
           borderWidth: 1,
           borderLeftWidth: 3,
-          borderRadius: 10,
+          borderRadius: 8,
           paddingHorizontal: 12,
-          paddingVertical: 10,
+          paddingVertical: 8,
         },
-        communityCopy: { flexGrow: compact ? 0 : 1, flexShrink: 1, minWidth: 0, gap: 3 },
-        communityHeading: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
-        communityBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: theme.colors.surface2 },
-        communityBadgeText: { fontSize: 9, fontWeight: "700", color: theme.colors.accent },
-        communityTitle: { fontSize: 12, fontWeight: "600", color: theme.colors.foreground },
-        communityHint: { fontSize: 10, color: theme.colors.foregroundMuted, lineHeight: 15 },
-        communityActions: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
+        communityBody: { flex: 1, minWidth: compact ? "100%" : 240, flexDirection: "row", alignItems: "center", gap: 8 },
+        communityText: { flex: 1, fontSize: 12, color: theme.colors.foreground, lineHeight: 18 },
+        communityTitle: { color: theme.colors.accent, fontWeight: "700" },
+        communityActions: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
         communityAction: {
-          minHeight: 32,
+          minHeight: 34,
           justifyContent: "center",
-          paddingHorizontal: 10,
-          paddingVertical: 6,
-          borderRadius: 999,
-          backgroundColor: theme.colors.surface2,
-          borderColor: theme.colors.border,
-          borderWidth: 1,
+          paddingHorizontal: 8,
+          paddingVertical: 5,
+          borderRadius: 6,
+          backgroundColor: theme.colors.surface1,
         },
-        communityActionPrimary: { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent },
-        communityActionText: {
-          fontSize: 11,
-          fontWeight: "600",
-          color: theme.colors.foreground,
-        },
-        communityActionPrimaryText: { color: theme.colors.accentForeground },
+        communityActionText: { fontSize: 11, fontWeight: "600", color: theme.colors.accent },
+        communityDismiss: { minWidth: 28, minHeight: 28, alignItems: "center", justifyContent: "center", paddingHorizontal: 4, paddingVertical: 2 },
+        communityDismissText: { fontSize: 12, color: theme.colors.foregroundMuted },
         banner: { backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 10 },
         bannerText: { fontSize: 11, color: theme.colors.foregroundMuted },
         updateBanner: {
@@ -290,37 +309,48 @@ export function UsageScreen(props: PluginScreenProps) {
           </View>
         </View>
 
-        <View style={styles.communityBanner}>
-          <View style={styles.communityCopy}>
-            <View style={styles.communityHeading}>
-              <View style={styles.communityBadge}>
-                <Text style={styles.communityBadgeText}>{t("community.badge")}</Text>
-              </View>
-              <Text style={styles.communityTitle}>{t("community.title")}</Text>
+        {prefsQuery.data && !prefsQuery.data.coCreateDismissed ? (
+          <View style={styles.communityBanner}>
+            <View style={styles.communityBody}>
+              <Icon name="Sparkles" size={15} color={theme.colors.accent} />
+              <Text style={styles.communityText}>
+                <Text style={styles.communityTitle}>{t("community.title")}</Text>
+                {` · ${t("community.hint")}`}
+              </Text>
             </View>
-            <Text style={styles.communityHint}>{t("community.hint")}</Text>
-          </View>
-          <View style={styles.communityActions}>
+            <View style={styles.communityActions}>
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel={t("community.issueA11y")}
+                hitSlop={6}
+                onPress={() => openCommunityLink(ISSUE_URL)}
+                style={styles.communityAction}
+              >
+                <Text style={styles.communityActionText}>{t("community.issue")}</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="link"
+                accessibilityLabel={t("community.prA11y")}
+                hitSlop={6}
+                onPress={() => openCommunityLink(PULL_REQUEST_URL)}
+                style={styles.communityAction}
+              >
+                <Text style={styles.communityActionText}>{t("community.pr")}</Text>
+              </Pressable>
+            </View>
             <Pressable
-              accessibilityRole="link"
-              accessibilityLabel={t("community.issueA11y")}
-              hitSlop={6}
-              onPress={() => openCommunityLink(ISSUE_URL)}
-              style={styles.communityAction}
+              accessibilityRole="button"
+              accessibilityLabel={t("community.dismissA11y")}
+              accessibilityState={{ disabled: dismissingCommunity }}
+              disabled={dismissingCommunity}
+              hitSlop={8}
+              onPress={() => void dismissCommunityBanner()}
+              style={styles.communityDismiss}
             >
-              <Text style={styles.communityActionText}>{t("community.issue")}</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="link"
-              accessibilityLabel={t("community.prA11y")}
-              hitSlop={6}
-              onPress={() => openCommunityLink(PULL_REQUEST_URL)}
-              style={[styles.communityAction, styles.communityActionPrimary]}
-            >
-              <Text style={[styles.communityActionText, styles.communityActionPrimaryText]}>{t("community.pr")}</Text>
+              <Text style={styles.communityDismissText}>✕</Text>
             </Pressable>
           </View>
-        </View>
+        ) : null}
 
         {updateQuery.data?.updateAvailable && !updateDismissed ? (
           <View style={styles.updateBanner}>

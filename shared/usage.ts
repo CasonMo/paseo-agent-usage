@@ -368,6 +368,8 @@ export const usageLanguageSchema = z.enum(["auto", "zh", "en"]);
 export const usagePrefsSchema = z.object({
   language: usageLanguageSchema,
   refreshMinutes: z.number().int().min(0).max(1440),
+  /** Whether the user permanently dismissed the dashboard's co-creation banner. */
+  coCreateDismissed: z.boolean().default(false),
   localAlias: z.string().trim().max(40).optional(),
   defaultRange: usageRangeSchema.optional(),
   defaultGranularity: usageGranularitySchema.optional(),

@@ -11,6 +11,7 @@
 
 界面：侧边栏底部「用量」行显示今日 token；点击打开全屏看板。看板包含 6 个预设页（总览、构成、效率、节奏、会话、对比），也支持自定义页面（空白新建或复制当前页，改名、排序、隐藏、删除；自定义页只在聚合视图生效，Agent 视图复用预设页）。每张图表都是卡片，可上移/下移、整行/半宽、隐藏或移除，布局按页面保存在本机偏好里。
 
+- 看板顶部展示「开源共创」横幅，可直接前往 GitHub 提 Issue 或提 PR；配置页同时保留按问题、功能需求和 Agent 接入分类的 Issue 模板入口
 - 顶部用紧凑工具栏提供设备选择（聚合 / 本机 / 各远端）、Agent 选择（总览 + Claude Code / Codex / OpenCode / Pi）、时间范围与粒度；页面内的页签和卡片负责分析内容
 - 总览：用量脉搏、趋势（全部/非缓存 Token 堆叠、请求、成本、7 日预测）、周期对比、异常日、Agent 份额、主机对比
 - 构成：Token 构成、模型/项目排行与集中度、Agent × 模型、项目 × Agent、矩形占比
@@ -72,6 +73,7 @@ Data sources (read locally on the daemon host; remote machines are collected ove
 
 Interface: the "Usage" row at the bottom of the sidebar shows today's tokens; clicking it opens a full-screen dashboard. The dashboard has six preset pages (Overview, Composition, Efficiency, Rhythm, Sessions, Compare) and supports custom pages (create blank or duplicate the current page, rename, reorder, hide, delete; custom pages live in the aggregate view, while the agent view reuses the preset pages). Every chart is a card that can move up/down, switch full/half width, hide or be removed; layouts are saved per page in local preferences.
 
+- The dashboard header shows an open-source co-creation banner with direct GitHub issue and pull-request links; Settings keeps the issue-template entries for bugs, feature requests, and new agents
 - Device selector (aggregate / local / each remote), agent selector (overview + Claude Code / Codex / OpenCode / Pi), range and granularity stay in a compact toolbar; page tabs and cards hold the analysis
 - Overview: usage pulse, token-type stack / requests / cost / 7-day forecast trend, period comparison, outlier days, agent share, host comparison
 - Composition: token mix, model/project ranking with concentration, agent × model and project × agent heatmaps, share map

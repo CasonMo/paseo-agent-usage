@@ -3,6 +3,7 @@
 Paseo plugin: token usage statistics for coding agents, computed from their local session logs, with optional SSH collection from remote machines.
 
 - Sidebar footer row still shows today's token total and opens the dashboard
+- The dashboard header shows an open-source co-creation banner with direct GitHub issue and pull-request links
 - Dashboard with six preset pages: Overview, Composition, Efficiency, Rhythm, Sessions, Compare
 - Every chart is a card: move up/down, switch full/half width, hide or remove; the layout is saved per page
 - Card titles carry a circled question mark: hover or tap it for the chart description; the custom-range calendar stays collapsed behind "Edit dates"
@@ -41,6 +42,7 @@ Paseo plugin: token usage statistics for coding agents, computed from their loca
 Paseo 插件：基于各编码 Agent 本地会话日志统计 token 用量，支持通过 SSH 采集远端机器数据。
 
 - 侧边栏底部行仍显示今日 token 总量，点击打开看板
+- 看板顶部展示开源共创横幅，可直接前往 GitHub 提 Issue 或提 PR
 - 看板包含 6 个预设页：总览、构成、效率、节奏、会话、对比
 - 每张图表都是卡片：可上移/下移、切换整行/半宽、隐藏或移除；布局按页面保存
 - 卡片标题右侧有圆圈问号：悬浮或点按查看图表说明；自定义范围的日期选择器默认收起，点“编辑日期”展开

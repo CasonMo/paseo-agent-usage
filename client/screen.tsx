@@ -1,4 +1,4 @@
-import type { PluginScreenProps } from "@getpaseo/plugin/client";
+import { openExternalUrl, type PluginScreenProps } from "@getpaseo/plugin/client";
 import { useMemo, useState } from "react";
 import type { TextStyle, ViewStyle } from "react-native";
 import { Pressable, ScrollView, Text, View } from "react-native";
@@ -9,6 +9,7 @@ import { fromAgentReport, fromReport } from "./dashboard-data";
 import { DateRangePicker } from "./date-range";
 import { useAgentReport, usePrefs, useRefreshUsage, useUpdateCheck, useUsageReport } from "./data";
 import { detectSystemLocale, useI18n, type Translate } from "./i18n";
+import { ISSUE_URL, PULL_REQUEST_URL } from "./links";
 
 type SelectKey = "device" | "agent" | "range" | "granularity";
 interface SelectOption { value: string; label: string }
@@ -40,6 +41,12 @@ function originStatusText(t: Translate, status: string, lastPullAt: number | nul
     return t("origin.synced", { time: `${hours}:${minutes}` });
   }
   return t("origin.ok");
+}
+
+function openCommunityLink(url: string) {
+  void openExternalUrl(url).catch((error) => {
+    console.error("Failed to open Agent Usage community link", error);
+  });
 }
 
 export function UsageScreen(props: PluginScreenProps) {
@@ -105,6 +112,43 @@ export function UsageScreen(props: PluginScreenProps) {
         toolbar: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", gap: 6, flexShrink: 1 },
         dateButton: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, backgroundColor: theme.colors.surface1, borderColor: theme.colors.border, borderWidth: 1 },
         dateButtonText: { fontSize: 10, color: theme.colors.foreground },
+        communityBanner: {
+          flexDirection: compact ? "column" : "row",
+          alignItems: compact ? "stretch" : "center",
+          gap: 10,
+          backgroundColor: theme.colors.surface1,
+          borderColor: theme.colors.border,
+          borderLeftColor: theme.colors.accent,
+          borderWidth: 1,
+          borderLeftWidth: 3,
+          borderRadius: 10,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+        },
+        communityCopy: { flexGrow: compact ? 0 : 1, flexShrink: 1, minWidth: 0, gap: 3 },
+        communityHeading: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
+        communityBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: theme.colors.surface2 },
+        communityBadgeText: { fontSize: 9, fontWeight: "700", color: theme.colors.accent },
+        communityTitle: { fontSize: 12, fontWeight: "600", color: theme.colors.foreground },
+        communityHint: { fontSize: 10, color: theme.colors.foregroundMuted, lineHeight: 15 },
+        communityActions: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
+        communityAction: {
+          minHeight: 32,
+          justifyContent: "center",
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderRadius: 999,
+          backgroundColor: theme.colors.surface2,
+          borderColor: theme.colors.border,
+          borderWidth: 1,
+        },
+        communityActionPrimary: { backgroundColor: theme.colors.accent, borderColor: theme.colors.accent },
+        communityActionText: {
+          fontSize: 11,
+          fontWeight: "600",
+          color: theme.colors.foreground,
+        },
+        communityActionPrimaryText: { color: theme.colors.accentForeground },
         banner: { backgroundColor: theme.colors.surface1, borderRadius: 10, padding: 10 },
         bannerText: { fontSize: 11, color: theme.colors.foregroundMuted },
         updateBanner: {
@@ -243,6 +287,38 @@ export function UsageScreen(props: PluginScreenProps) {
                 <Text style={styles.refreshText}>{query.isFetching ? t("app.refreshing") : t("app.refresh")}</Text>
               </Pressable>
             </View>
+          </View>
+        </View>
+
+        <View style={styles.communityBanner}>
+          <View style={styles.communityCopy}>
+            <View style={styles.communityHeading}>
+              <View style={styles.communityBadge}>
+                <Text style={styles.communityBadgeText}>{t("community.badge")}</Text>
+              </View>
+              <Text style={styles.communityTitle}>{t("community.title")}</Text>
+            </View>
+            <Text style={styles.communityHint}>{t("community.hint")}</Text>
+          </View>
+          <View style={styles.communityActions}>
+            <Pressable
+              accessibilityRole="link"
+              accessibilityLabel={t("community.issueA11y")}
+              hitSlop={6}
+              onPress={() => openCommunityLink(ISSUE_URL)}
+              style={styles.communityAction}
+            >
+              <Text style={styles.communityActionText}>{t("community.issue")}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="link"
+              accessibilityLabel={t("community.prA11y")}
+              hitSlop={6}
+              onPress={() => openCommunityLink(PULL_REQUEST_URL)}
+              style={[styles.communityAction, styles.communityActionPrimary]}
+            >
+              <Text style={[styles.communityActionText, styles.communityActionPrimaryText]}>{t("community.pr")}</Text>
+            </Pressable>
           </View>
         </View>
 

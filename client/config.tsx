@@ -6,6 +6,7 @@ import type { TextStyle, ViewStyle } from "react-native";
 import { Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
 import { PREFS_QUERY_KEY, useAgentsConfig, usePrefs, useSetAgentsConfig, useSetPrefs } from "./data";
 import { detectSystemLocale, setLanguageMode, useI18n, type DictKey, type LanguageMode } from "./i18n";
+import { ISSUE_URL } from "./links";
 import type { UsageGranularity, UsagePrefs, UsageRangeKey } from "../shared/usage";
 import { HostsManager } from "./settings";
 
@@ -300,8 +301,6 @@ function AgentsSection({ theme, compact }: { theme: Theme; compact: boolean }) {
   );
 }
 
-const ISSUE_URL = "https://github.com/CasonMo/paseo-agent-usage/issues/new";
-
 const FEEDBACK_ITEMS: ReadonlyArray<{ template: string; title: DictKey; hint: DictKey }> = [
   { template: "bug_report.yml", title: "config.feedback.bug", hint: "config.feedback.bugHint" },
   { template: "feature_request.yml", title: "config.feedback.feature", hint: "config.feedback.featureHint" },
@@ -329,7 +328,7 @@ function FeedbackSection({ theme }: { theme: Theme }) {
       {FEEDBACK_ITEMS.map((item) => (
         <View key={item.template} style={styles.item}>
           <ExternalLink href={`${ISSUE_URL}?template=${item.template}`} accessibilityLabel={t(item.title)}>
-            <Text style={styles.link}>{t(item.title)} ↗</Text>
+            <Text style={styles.link}>{t(item.title)}</Text>
           </ExternalLink>
           <Text style={styles.hint}>{t(item.hint)}</Text>
         </View>

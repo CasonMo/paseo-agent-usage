@@ -1,6 +1,6 @@
 {
   "name": "paseo-agent-usage",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Token usage statistics for coding agents from local session logs, with SSH collection, six analysis pages, custom dashboards, budgets, session details, and a dismissible GitHub issue/PR co-creation entry.",
   "license": "MIT",
   "repository": {

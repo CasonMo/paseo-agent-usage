@@ -368,7 +368,7 @@ export function UsageScreen(props: PluginScreenProps) {
             from={customFrom}
             to={customTo}
             onChange={(next) => {
-              if (!next.from || !next.to) {
+              if (!next.from && !next.to) {
                 setCustomFrom("");
                 setCustomTo("");
                 chooseRange("7d");

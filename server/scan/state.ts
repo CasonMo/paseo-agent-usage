@@ -157,6 +157,20 @@ export interface RemoteHostState {
   generatedAt: number | null;
 }
 
+/** OpenCode scan cursor. `watermark`/`lastId` track the v2 `session_message`
+ *  table (or the v1 `message` table when no v2 projection exists).
+ *  `legacyWatermark`/`legacyLastId` track the frozen v1 table in a database
+ *  that has both generations. `seen` is a bounded ledger of counted message
+ *  ids, used while a cursor is held for an in-flight row and for the v1/v2
+ *  overlap during a migration. */
+export interface OpenCodeState {
+  watermark: number;
+  lastId: string;
+  legacyWatermark?: number;
+  legacyLastId?: string;
+  seen?: string[];
+}
+
 export interface ScanState {
   version: typeof STATE_VERSION;
   buckets: Record<string, UsageBucket>;
@@ -164,7 +178,7 @@ export interface ScanState {
   sessions: Record<string, SessionEntry>;
   files: Record<string, FileState>;
   recent: Record<string, CallRecord[]>;
-  opencode: { watermark: number; lastId: string };
+  opencode: OpenCodeState;
   /**
    * Pi cross-file dedup ledger: "entryId@timestamp" keys of every counted
    * message. Pi fork / sub-run files copy messages from their parent, so the
@@ -331,6 +345,13 @@ export async function loadState(dir: string): Promise<ScanState> {
     state.opencode = {
       watermark: finite(parsed.opencode?.watermark),
       lastId: typeof parsed.opencode?.lastId === "string" ? parsed.opencode.lastId : "",
+      legacyWatermark:
+        typeof parsed.opencode?.legacyWatermark === "number" ? parsed.opencode.legacyWatermark : undefined,
+      legacyLastId:
+        typeof parsed.opencode?.legacyLastId === "string" ? parsed.opencode.legacyLastId : undefined,
+      seen: Array.isArray(parsed.opencode?.seen)
+        ? parsed.opencode.seen.filter((id): id is string => typeof id === "string")
+        : undefined,
     };
     state.pi = { seen: Array.isArray(parsed.pi?.seen) ? (parsed.pi.seen as string[]).filter((k) => typeof k === "string") : [] };
     state.hosts = (parsed.hosts as ScanState["hosts"]) ?? {};

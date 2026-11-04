@@ -51,7 +51,7 @@ function defaultAgentsConfig(): Record<string, boolean> {
 }
 
 function defaultPrefs(): UsagePrefs {
-  return { language: "auto", refreshMinutes: 30 };
+  return { language: "auto", refreshMinutes: 30, coCreateDismissed: false };
 }
 
 const RANGE_VALUES = new Set(["24h", "today", "7d", "30d", "12w", "12m", "custom"]);
@@ -66,6 +66,7 @@ function sanitizePrefs(raw: unknown): UsagePrefs {
       const minutes = Math.round(record.refreshMinutes);
       if (minutes >= 0 && minutes <= 1440) next.refreshMinutes = minutes;
     }
+    if (record.coCreateDismissed === true) next.coCreateDismissed = true;
     if (typeof record.localAlias === "string") {
       const alias = record.localAlias.trim().slice(0, 40);
       if (alias) next.localAlias = alias;
@@ -180,6 +181,8 @@ export function createUsageService(): UsageService {
   let refreshTimer: ReturnType<typeof setInterval> | null = null;
   let prefs: UsagePrefs = defaultPrefs();
   let prefsAt = 0;
+  let prefsRead: Promise<UsagePrefs> | null = null;
+  let prefsWrite: Promise<void> = Promise.resolve();
   let hostConfigs: HostConfig[] = [];
   let hostConfigsAt = 0;
   let agentsConfig: Record<string, boolean> = defaultAgentsConfig();
@@ -224,15 +227,21 @@ export function createUsageService(): UsageService {
 
   async function refreshPrefs(force: boolean): Promise<UsagePrefs> {
     if (!force && Date.now() - prefsAt < 60_000) return prefs;
-    prefsAt = Date.now();
-    try {
-      const parsed = JSON.parse(await readFile(join(dir, PREFS_FILE), "utf8")) as unknown;
-      prefs = sanitizePrefs(parsed);
-    } catch {
-      prefs = defaultPrefs();
-    }
-    applyPrefs();
-    return prefs;
+    if (prefsRead) return prefsRead;
+    prefsRead = (async () => {
+      try {
+        const parsed = JSON.parse(await readFile(join(dir, PREFS_FILE), "utf8")) as unknown;
+        prefs = sanitizePrefs(parsed);
+      } catch {
+        prefs = defaultPrefs();
+      }
+      prefsAt = Date.now();
+      applyPrefs();
+      return prefs;
+    })().finally(() => {
+      prefsRead = null;
+    });
+    return prefsRead;
   }
 
   function applyPrefs(): void {
@@ -248,6 +257,15 @@ export function createUsageService(): UsageService {
     await rename(temporary, file);
   }
 
+  function enqueuePrefsWrite<T>(task: () => Promise<T>): Promise<T> {
+    const result = prefsWrite.then(task, task);
+    prefsWrite = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
   async function prefsGet(locale?: "zh" | "en"): Promise<UsagePrefs> {
     await loaded;
     await refreshPrefs(false);
@@ -255,18 +273,24 @@ export function createUsageService(): UsageService {
     return { ...prefs };
   }
 
-  async function prefsSet(next: UsagePrefs): Promise<{ saved: boolean; error: string | null }> {
-    await loaded;
-    const sanitized = sanitizePrefs(next);
-    try {
-      await writePrefs(sanitized);
-    } catch (error) {
-      return { saved: false, error: st("保存失败：", "Save failed: ") + (error instanceof Error ? error.message : String(error)) };
-    }
-    prefs = sanitized;
-    prefsAt = Date.now();
-    applyPrefs();
-    return { saved: true, error: null };
+  function prefsSet(next: UsagePrefs): Promise<{ saved: boolean; error: string | null }> {
+    return enqueuePrefsWrite(async () => {
+      await loaded;
+      await refreshPrefs(false);
+      const sanitized = sanitizePrefs(next);
+      // Dismissal is permanent for this installation: an older client or a stale
+      // settings snapshot must not bring the banner back.
+      if (prefs.coCreateDismissed) sanitized.coCreateDismissed = true;
+      try {
+        await writePrefs(sanitized);
+      } catch (error) {
+        return { saved: false, error: st("保存失败：", "Save failed: ") + (error instanceof Error ? error.message : String(error)) };
+      }
+      prefs = sanitized;
+      prefsAt = Date.now();
+      applyPrefs();
+      return { saved: true, error: null };
+    });
   }
 
   /** Pull cadence for hosts follows the user's refresh setting (bounded by the 10-min default). */

@@ -1,6 +1,22 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
+/**
+ * Canonical coding-agent registry: the single source of truth for which agents
+ * the plugin knows about, their display order and labels. The server
+ * (`service.ts` / `report.ts`) and the client derive their lists from here, so
+ * wiring a new adapter means adding one entry here plus its scanner.
+ */
+export const AGENT_IDS: readonly string[] = ["claude", "codex", "opencode", "pi", "agy", "codebuddy"];
+export const AGENT_LABELS: Record<string, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  opencode: "OpenCode",
+  pi: "Pi",
+  agy: "Antigravity (agy)",
+  codebuddy: "Codebuddy Code",
+};
+
 export const usageRangeSchema = z.enum(["24h", "today", "7d", "30d", "12w", "12m", "custom"]);
 export type UsageRangeKey = z.infer<typeof usageRangeSchema>;
 

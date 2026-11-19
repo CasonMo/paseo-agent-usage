@@ -9,11 +9,12 @@
 - OpenCode：`~/.local/share/opencode/opencode.db`（通过 node:sqlite 只读；自动识别 1.x 的 `session`/`message` 与 2.x 的 `session_v2`/`session_message`，迁移期间按消息 ID 去重；reasoning token 计入输出，与计费口径一致）
 - Antigravity CLI（agy）：通过 Node 22.5+ 的 node:sqlite 只读访问 `~/.gemini/antigravity-cli/conversations/*.db` 的生成元数据和步骤时间戳，以及会话索引中的工作区路径。仅统计可读取的数据库中保留的调用，思考 Token 已计入输出，账单金额不可用。
 - Pi：`~/.pi/agent/sessions`（含 forks 与子会话目录；跨文件按消息去重，fork 复制段不重复计）
+- Codebuddy Code：`~/.codebuddy/projects`（含 `subagents/` 子目录；读取每行 `providerData.usage`，`inputTokens` 含缓存读取部分，已拆出为 cacheRead 以免重复计数，且 cacheRead 不超过 inputTokens；reasoning token 单独记录；日志不含成本与 cache-write 字段，故 cost 与 cacheWrite 均记为 0。父会话与 subagent 的 message id 不重叠——已用真实日志核对无重叠，跨文件账本留作后续）
 
 界面：侧边栏底部「用量」行显示今日 token；点击打开全屏看板。看板包含 6 个预设页（总览、构成、效率、节奏、会话、对比），也支持自定义页面（空白新建或复制当前页，改名、排序、隐藏、删除；自定义页只在聚合视图生效，Agent 视图复用预设页）。每张图表都是卡片，可上移/下移、整行/半宽、隐藏或移除，布局按页面保存在本机偏好里。
 
 - 看板顶部展示可关闭的「开源共创」横幅，可直接前往 GitHub 提 Issue 或提 PR；关闭状态会持久化并永久隐藏该横幅，配置页仍保留按问题、功能需求和 Agent 接入分类的 Issue 模板入口
-- 顶部用紧凑工具栏提供设备选择（聚合 / 本机 / 各远端）、Agent 选择（总览 + Claude Code / Codex / OpenCode / Pi / Antigravity (agy)）、时间范围与粒度；页面内的页签和卡片负责分析内容
+- 顶部用紧凑工具栏提供设备选择（聚合 / 本机 / 各远端）、Agent 选择（总览 + Claude Code / Codex / OpenCode / Pi / Antigravity (agy) / Codebuddy Code）、时间范围与粒度；页面内的页签和卡片负责分析内容
 - 总览：用量脉搏、趋势（全部/非缓存 Token 堆叠、请求、成本、7 日预测）、周期对比、异常日、Agent 份额、主机对比
 - 构成：Token 构成、模型/项目排行与集中度、Agent × 模型、项目 × Agent、矩形占比
 - 效率：缓存命中率、缓存读写、请求均量、输入输出结构、模型效率象限、成本趋势/效率、累计曲线
@@ -72,11 +73,12 @@ Data sources (read locally on the daemon host; remote machines are collected ove
 - OpenCode: `~/.local/share/opencode/opencode.db` (read-only via node:sqlite; detects the 1.x `session`/`message` and 2.x `session_v2`/`session_message` layouts, deduplicating by message id during a migration; reasoning tokens count as output, matching the billing basis)
 - Antigravity CLI (agy): reads only generation metadata and step timestamps from `~/.gemini/antigravity-cli/conversations/*.db` and workspace paths from the conversation index using node:sqlite on Node 22.5+. Usage reflects the calls retained in readable databases. Output includes thinking tokens. Billing amounts are unavailable.
 - Pi: `~/.pi/agent/sessions` (including forks and sub-session directories; messages are deduplicated across files, so copied fork segments are not counted twice)
+- Codebuddy Code: `~/.codebuddy/projects` (including `subagents/`; reads each row's `providerData.usage` — `inputTokens` includes the cache-read portion, split out as cacheRead to avoid double counting and capped at the reported input; reasoning tokens are tracked separately; logs carry no cost or cache-write field, so cost and cacheWrite are recorded as 0. Parent and subagent message ids are assumed not to overlap — checked against real logs and none do; a cross-file ledger is left for a follow-up)
 
 Interface: the "Usage" row at the bottom of the sidebar shows today's tokens; clicking it opens a full-screen dashboard. The dashboard has six preset pages (Overview, Composition, Efficiency, Rhythm, Sessions, Compare) and supports custom pages (create blank or duplicate the current page, rename, reorder, hide, delete; custom pages live in the aggregate view, while the agent view reuses the preset pages). Every chart is a card that can move up/down, switch full/half width, hide or be removed; layouts are saved per page in local preferences.
 
 - The dashboard header shows a dismissible open-source co-creation banner with direct GitHub issue and pull-request links; dismissal is persisted and hides the banner permanently, while Settings keeps the issue-template entries for bugs, feature requests, and new agents
-- Device selector (aggregate / local / each remote), agent selector (overview + Claude Code / Codex / OpenCode / Pi / Antigravity (agy)), range and granularity stay in a compact toolbar; page tabs and cards hold the analysis
+- Device selector (aggregate / local / each remote), agent selector (overview + Claude Code / Codex / OpenCode / Pi / Antigravity (agy) / Codebuddy Code), range and granularity stay in a compact toolbar; page tabs and cards hold the analysis
 - Overview: usage pulse, token-type stack / requests / cost / 7-day forecast trend, period comparison, outlier days, agent share, host comparison
 - Composition: token mix, model/project ranking with concentration, agent × model and project × agent heatmaps, share map
 - Efficiency: cache hit and cache read/write, tokens per request, input/output structure, model efficiency map, cost trend/efficiency, cumulative usage

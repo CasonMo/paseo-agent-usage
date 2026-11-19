@@ -4,6 +4,7 @@ export const AGENT_COLORS: Record<string, string> = {
   opencode: "#3E9B72",
   pi: "#8F6FD1",
   agy: "#487F9B",
+  codebuddy: "#16B8A6",
 };
 
 export const AGENT_SHORT: Record<string, string> = {
@@ -12,6 +13,7 @@ export const AGENT_SHORT: Record<string, string> = {
   opencode: "OpenCode",
   pi: "Pi",
   agy: "Antigravity (agy)",
+  codebuddy: "Codebuddy",
 };
 
 export const FALLBACK_COLOR = "#8A8F96";

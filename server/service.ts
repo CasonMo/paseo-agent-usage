@@ -37,17 +37,18 @@ const HOST_MIN_INTERVAL_MS = 10 * 60 * 1000;
 const HOSTS_FILE = "hosts.json";
 const AGENTS_FILE = "agents.json";
 const PREFS_FILE = "prefs.json";
-const AGENT_ORDER = ["claude", "codex", "opencode", "pi"];
+const AGENT_ORDER = ["claude", "codex", "opencode", "pi", "codebuddy"];
 const AGENT_LABELS: Record<string, string> = {
   claude: "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
   pi: "Pi",
+  codebuddy: "Codebuddy Code",
 };
 
 /** Agents included in statistics and scanning. */
 function defaultAgentsConfig(): Record<string, boolean> {
-  return { claude: true, codex: true, opencode: true, pi: true };
+  return { claude: true, codex: true, opencode: true, pi: true, codebuddy: true };
 }
 
 function defaultPrefs(): UsagePrefs {

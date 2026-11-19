@@ -2,8 +2,8 @@
 export const COLLECTOR_SCRIPT = `"use strict";
 
 // server/remote/collector.ts
-var import_node_os5 = require("os");
-var import_node_path7 = require("path");
+var import_node_os6 = require("os");
+var import_node_path8 = require("path");
 
 // server/scan/scanner.ts
 var import_promises3 = require("fs/promises");
@@ -408,14 +408,167 @@ async function scanClaudeFile(state, path) {
   state.files[path] = fileState;
 }
 
-// server/scan/codex.ts
+// server/scan/codebuddy.ts
 var import_node_os2 = require("os");
 var import_node_path4 = require("path");
+var CODEBUDDY = "codebuddy";
+function codebuddyRoots(env = process.env) {
+  var _a;
+  const home = (0, import_node_os2.homedir)();
+  const base = ((_a = env.CODEBUDDY_CONFIG_DIR) == null ? void 0 : _a.trim()) || (0, import_node_path4.join)(home, ".codebuddy");
+  return [.../* @__PURE__ */ new Set([(0, import_node_path4.join)(base, "projects"), (0, import_node_path4.join)(home, ".config", "codebuddy", "projects")])];
+}
+function cachedInput(usage) {
+  const details = usage.inputTokensDetails;
+  if (Array.isArray(details)) {
+    let total = 0;
+    for (const item of details) {
+      if (item && typeof item === "object") total += num(item.cached_tokens);
+    }
+    return total;
+  }
+  return 0;
+}
+function reasoningTokens(usage) {
+  const details = usage.outputTokensDetails;
+  if (Array.isArray(details)) {
+    let total = 0;
+    for (const item of details) {
+      if (item && typeof item === "object") total += num(item.reasoning_tokens);
+    }
+    return total;
+  }
+  return 0;
+}
+async function scanCodebuddyFile(state, path) {
+  const previousState = state.files[path];
+  const recent = /* @__PURE__ */ new Map();
+  let sessionTitle = (previousState == null ? void 0 : previousState.sessionTitle) ?? "";
+  if (previousState == null ? void 0 : previousState.recent) {
+    for (const contribution of previousState.recent) recent.set(contribution.id, contribution);
+  }
+  const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
+    if (!sessionTitle && (line.includes('"role":"user"') || line.includes('"role": "user"'))) {
+      try {
+        const entry2 = JSON.parse(line);
+        const raw = (entry2 == null ? void 0 : entry2.role) === "user" ? firstMessageText(entry2.content) : "";
+        const text = raw && !MACHINE_LABEL.test(raw.trim()) ? clipTitle(raw) : "";
+        if (text) sessionTitle = text;
+      } catch {
+      }
+    }
+    if (!line.includes('"usage"') || !line.includes('"providerData"')) return;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const provider = entry == null ? void 0 : entry.providerData;
+    if (!provider || typeof provider !== "object") return;
+    const usage = provider.usage;
+    if (!usage || typeof usage !== "object") return;
+    const ts = typeof entry.timestamp === "number" ? entry.timestamp : Date.parse(entry.timestamp);
+    if (!Number.isFinite(ts)) return;
+    const id = typeof provider.messageId === "string" && provider.messageId ? provider.messageId : "";
+    const sid = typeof entry.sessionId === "string" ? entry.sessionId : "";
+    const project = typeof entry.cwd === "string" ? entry.cwd : "";
+    const model = typeof provider.model === "string" && provider.model ? provider.model : typeof provider.requestModelId === "string" && provider.requestModelId ? provider.requestModelId : "unknown";
+    const cacheRead = cachedInput(usage);
+    const input = Math.max(0, num(usage.inputTokens) - cacheRead);
+    const output = num(usage.outputTokens);
+    const reasoning = reasoningTokens(usage);
+    const contribution = {
+      id,
+      d: localHourKey(ts),
+      m: model,
+      p: project,
+      i: input,
+      o: output,
+      cr: cacheRead,
+      cw: 0,
+      rz: reasoning
+    };
+    if (id && recent.has(id)) {
+      const before = recent.get(id);
+      addBucket(state.buckets, before.d, CODEBUDDY, before.m, before.p, {
+        r: -1,
+        i: -before.i,
+        o: -before.o,
+        cr: -before.cr,
+        cw: -before.cw,
+        rz: -before.rz
+      });
+      applySession(state.sessions, CODEBUDDY, sid, {
+        r: -1,
+        i: -before.i,
+        o: -before.o,
+        cr: -before.cr,
+        cw: -before.cw,
+        rz: -before.rz
+      });
+    }
+    if (id) {
+      recent.set(id, contribution);
+      if (recent.size > 96) {
+        const oldest = recent.keys().next().value;
+        if (typeof oldest === "string" && oldest !== id) recent.delete(oldest);
+      }
+    }
+    addBucket(state.buckets, contribution.d, CODEBUDDY, contribution.m, contribution.p, {
+      r: 1,
+      i: contribution.i,
+      o: contribution.o,
+      cr: contribution.cr,
+      cw: contribution.cw,
+      rz: contribution.rz
+    });
+    applySession(state.sessions, CODEBUDDY, sid, {
+      t: ts,
+      r: 1,
+      p: contribution.p,
+      i: contribution.i,
+      o: contribution.o,
+      cr: contribution.cr,
+      cw: contribution.cw,
+      rz: contribution.rz,
+      title: sessionTitle || void 0
+    });
+    recordCall(
+      state,
+      CODEBUDDY,
+      {
+        t: ts,
+        m: contribution.m,
+        p: contribution.p,
+        s: sid,
+        i: contribution.i,
+        o: contribution.o,
+        cr: contribution.cr,
+        cw: contribution.cw,
+        rz: contribution.rz,
+        cost: 0,
+        credits: 0,
+        id: id || void 0
+      },
+      id || void 0
+    );
+  });
+  if (!result) return;
+  const fileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs };
+  if (sessionTitle) fileState.sessionTitle = sessionTitle;
+  if (recent.size > 0) fileState.recent = [...recent.values()].slice(-96);
+  state.files[path] = fileState;
+}
+
+// server/scan/codex.ts
+var import_node_os3 = require("os");
+var import_node_path5 = require("path");
 var CODEX = "codex";
 function codexRoots(env = process.env) {
   var _a;
-  const home = ((_a = env.CODEX_HOME) == null ? void 0 : _a.trim()) || (0, import_node_path4.join)((0, import_node_os2.homedir)(), ".codex");
-  return [(0, import_node_path4.join)(home, "sessions"), (0, import_node_path4.join)(home, "archived_sessions")];
+  const home = ((_a = env.CODEX_HOME) == null ? void 0 : _a.trim()) || (0, import_node_path5.join)((0, import_node_os3.homedir)(), ".codex");
+  return [(0, import_node_path5.join)(home, "sessions"), (0, import_node_path5.join)(home, "archived_sessions")];
 }
 var BURST_WINDOW_MS = 2e3;
 async function scanCodexFile(state, path) {
@@ -612,14 +765,14 @@ async function scanCodexFile(state, path) {
 // server/scan/opencode.ts
 var import_node_fs = require("fs");
 var import_node_module = require("module");
-var import_node_os3 = require("os");
-var import_node_path5 = require("path");
+var import_node_os4 = require("os");
+var import_node_path6 = require("path");
 var OPENCODE = "opencode";
 var sqliteModule;
 async function loadSqlite() {
   if (sqliteModule !== void 0) return sqliteModule;
   try {
-    const requireFn = (0, import_node_module.createRequire)((0, import_node_path5.join)(process.cwd(), "agent-usage-sqlite.cjs"));
+    const requireFn = (0, import_node_module.createRequire)((0, import_node_path6.join)(process.cwd(), "agent-usage-sqlite.cjs"));
     sqliteModule = requireFn("node:sqlite");
   } catch {
     sqliteModule = null;
@@ -628,8 +781,8 @@ async function loadSqlite() {
 }
 function opencodeDbPath(env = process.env) {
   var _a;
-  const dataHome = ((_a = env.XDG_DATA_HOME) == null ? void 0 : _a.trim()) || (0, import_node_path5.join)((0, import_node_os3.homedir)(), ".local", "share");
-  return (0, import_node_path5.join)(dataHome, "opencode", "opencode.db");
+  const dataHome = ((_a = env.XDG_DATA_HOME) == null ? void 0 : _a.trim()) || (0, import_node_path6.join)((0, import_node_os4.homedir)(), ".local", "share");
+  return (0, import_node_path6.join)(dataHome, "opencode", "opencode.db");
 }
 async function scanOpencode(state) {
   var _a, _b;
@@ -737,19 +890,19 @@ async function scanOpencode(state) {
 }
 
 // server/scan/pi.ts
-var import_node_os4 = require("os");
-var import_node_path6 = require("path");
+var import_node_os5 = require("os");
+var import_node_path7 = require("path");
 var PI = "pi";
 var PI_SEEN_LIMIT = 4e5;
 var seenCache = /* @__PURE__ */ new WeakMap();
 function piRoots(env = process.env) {
   var _a, _b;
-  const home = (0, import_node_os4.homedir)();
+  const home = (0, import_node_os5.homedir)();
   const roots = [];
   const sessionDir = (_a = env.PI_CODING_AGENT_SESSION_DIR) == null ? void 0 : _a.trim();
   if (sessionDir) roots.push(sessionDir);
-  const agentDir = ((_b = env.PI_CODING_AGENT_DIR) == null ? void 0 : _b.trim()) || (0, import_node_path6.join)(home, ".pi", "agent");
-  roots.push((0, import_node_path6.join)(agentDir, "sessions"));
+  const agentDir = ((_b = env.PI_CODING_AGENT_DIR) == null ? void 0 : _b.trim()) || (0, import_node_path7.join)(home, ".pi", "agent");
+  roots.push((0, import_node_path7.join)(agentDir, "sessions"));
   return [...new Set(roots)];
 }
 async function scanPiFile(state, path) {
@@ -861,12 +1014,13 @@ async function scanAll(state, callbacks, enabledHarnesses) {
     resetCounters(state);
   }
   const on = (id) => !enabledHarnesses || enabledHarnesses.has(id);
-  const [claudeFiles, piFiles, codexFiles] = await Promise.all([
+  const [claudeFiles, piFiles, codexFiles, codebuddyFiles] = await Promise.all([
     collectRoots(claudeRoots()),
     collectRoots(piRoots()),
-    collectRoots(codexRoots())
+    collectRoots(codexRoots()),
+    collectRoots(codebuddyRoots())
   ]);
-  const total = (on("claude") ? claudeFiles.length : 0) + (on("pi") ? piFiles.length : 0) + (on("codex") ? codexFiles.length : 0) + (on("opencode") ? 1 : 0);
+  const total = (on("claude") ? claudeFiles.length : 0) + (on("pi") ? piFiles.length : 0) + (on("codex") ? codexFiles.length : 0) + (on("codebuddy") ? codebuddyFiles.length : 0) + (on("opencode") ? 1 : 0);
   let done = 0;
   let checkpointAt = Date.now();
   callbacks.onProgress(done, total);
@@ -893,6 +1047,7 @@ async function scanAll(state, callbacks, enabledHarnesses) {
   };
   if (on("claude") && !await run(claudeFiles, scanClaudeFile)) return;
   if (on("pi") && !await run(piFiles, scanPiFile)) return;
+  if (on("codebuddy") && !await run(codebuddyFiles, scanCodebuddyFile)) return;
   if (on("opencode")) {
     if (callbacks.shouldStop()) return;
     try {
@@ -939,7 +1094,7 @@ function argValue(args, name) {
 }
 async function main() {
   const args = process.argv.slice(2);
-  const cacheDir = argValue(args, "--cache-dir") || (0, import_node_path7.join)((0, import_node_os5.homedir)(), ".cache", "agent-usage-plugin");
+  const cacheDir = argValue(args, "--cache-dir") || (0, import_node_path8.join)((0, import_node_os6.homedir)(), ".cache", "agent-usage-plugin");
   const fresh = args.includes("--fresh");
   process.stderr.write(\`agent-usage collector: node \${process.version}, cache \${cacheDir}\${fresh ? ", fresh" : ""}
 \`);

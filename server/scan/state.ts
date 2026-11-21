@@ -176,7 +176,7 @@ export interface ScanState {
   meta: { lastScanAt: number | null; scanError: string | null };
 }
 
-const MAX_RECENT_PER_AGENT = 400;
+export const MAX_RECENT_PER_AGENT = 400;
 
 export function emptyState(): ScanState {
   return {

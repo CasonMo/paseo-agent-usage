@@ -6,6 +6,7 @@ import { buildAgentReport, buildReport, type HostView } from "./report";
 import { setServerLocale, st } from "./i18n";
 import { applyHostForms, readHostsFile, writeHostsFile } from "./remote/hosts-file";
 import { pullHost, testHost, type HostConfig } from "./remote/ssh";
+import { AGY } from "./scan/agy";
 import { scanAll } from "./scan/scanner";
 import { emptyState, loadState, pluginDataDir, saveState, type CallRecord, type UsageBucket, type RemoteHostState, type ScanState, type SessionEntry } from "./scan/state";
 import { num } from "./scan/util";
@@ -37,17 +38,18 @@ const HOST_MIN_INTERVAL_MS = 10 * 60 * 1000;
 const HOSTS_FILE = "hosts.json";
 const AGENTS_FILE = "agents.json";
 const PREFS_FILE = "prefs.json";
-const AGENT_ORDER = ["claude", "codex", "opencode", "pi"];
+const AGENT_ORDER = ["claude", "codex", "opencode", "pi", "agy"];
 const AGENT_LABELS: Record<string, string> = {
   claude: "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
   pi: "Pi",
+  agy: "Antigravity (agy)",
 };
 
 /** Agents included in statistics and scanning. */
 function defaultAgentsConfig(): Record<string, boolean> {
-  return { claude: true, codex: true, opencode: true, pi: true };
+  return { claude: true, codex: true, opencode: true, pi: true, agy: true };
 }
 
 function defaultPrefs(): UsagePrefs {
@@ -398,9 +400,12 @@ export function createUsageService(): UsageService {
   async function startScan(force: boolean): Promise<boolean> {
     await loaded;
     if (stopped || scanning) return false;
-    const age = state.meta.lastScanAt ? Date.now() - state.meta.lastScanAt : Number.POSITIVE_INFINITY;
-    if (!force && !dirty && state.meta.lastScanAt && age < 5 * 60_000) return false;
     await refreshAgentsConfig(true);
+    if (stopped || scanning) return false;
+    const age = state.meta.lastScanAt ? Date.now() - state.meta.lastScanAt : Number.POSITIVE_INFINITY;
+    // A version 13 cache may be fresh and still predate the agy scanner.
+    const needsAgyScan = agentsConfig[AGY] !== false && state.recent[AGY] === undefined;
+    if (!force && !dirty && !needsAgyScan && age < 5 * 60_000) return false;
     scanning = true;
     dirty = false;
     done = 0;

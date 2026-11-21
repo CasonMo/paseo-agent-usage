@@ -1,11 +1,11 @@
 "use strict";
 
 // server/remote/collector.ts
-var import_node_os5 = require("os");
-var import_node_path7 = require("path");
+var import_node_os6 = require("os");
+var import_node_path8 = require("path");
 
 // server/scan/scanner.ts
-var import_promises3 = require("fs/promises");
+var import_promises4 = require("fs/promises");
 
 // server/scan/claude.ts
 var import_node_os = require("os");
@@ -853,6 +853,210 @@ async function scanPiFile(state, path) {
   state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, sessionTitle: title || void 0 };
 }
 
+// server/scan/agy.ts
+var import_promises3 = require("fs/promises");
+var import_node_os5 = require("os");
+var import_node_path7 = require("path");
+var import_node_timers = require("timers");
+var import_node_url = require("url");
+var AGY = "agy";
+var DATABASE_NAME = /^([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\.db$/i;
+var PLANNER_RESPONSE = 15;
+function readVarint(bytes, offset) {
+  let value = 0;
+  for (let shift = 0; shift < 70 && offset < bytes.length; shift += 7) {
+    const byte = bytes[offset++];
+    value += (byte & 127) * 2 ** shift;
+    if (byte < 128) return [value, offset];
+  }
+  return null;
+}
+function readFields(value, wanted) {
+  const fields = /* @__PURE__ */ new Map();
+  if (!(value instanceof Uint8Array)) return fields;
+  let offset = 0;
+  while (offset < value.length) {
+    const tag = readVarint(value, offset);
+    if (!tag || tag[0] < 8 || tag[0] > 4294967295) return /* @__PURE__ */ new Map();
+    const [key, start] = tag;
+    const field = key >>> 3;
+    const type = key & 7;
+    if (type === 0 || type === 2) {
+      const item = readVarint(value, start);
+      if (!item) return /* @__PURE__ */ new Map();
+      const [number, next] = item;
+      offset = type === 0 ? next : next + number;
+      if (offset > value.length) return /* @__PURE__ */ new Map();
+      if (wanted.includes(field)) {
+        fields.set(field, type === 0 ? number : value.subarray(next, offset));
+      }
+    } else if (type === 1 || type === 5) {
+      offset = start + (type === 1 ? 8 : 4);
+      if (offset > value.length) return /* @__PURE__ */ new Map();
+    } else {
+      return /* @__PURE__ */ new Map();
+    }
+  }
+  return fields;
+}
+function count(fields, field) {
+  const value = fields.get(field);
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+function readCreatedAt(metadata) {
+  const timestamp = readFields(readFields(metadata, [1]).get(1), [1, 2]);
+  const seconds = count(timestamp, 1);
+  const nanos = count(timestamp, 2);
+  return seconds > 0 && seconds <= 253402300799 && nanos < 1e9 ? { seconds, nanos } : null;
+}
+function readGeneration(blob) {
+  var _a;
+  const generation = readFields(blob, [1, 2]);
+  const steps = generation.get(2);
+  const firstStep = steps instanceof Uint8Array ? (_a = readVarint(steps, 0)) == null ? void 0 : _a[0] : steps;
+  if (firstStep === void 0 || !Number.isSafeInteger(firstStep)) return null;
+  const result = readFields(generation.get(1), [4, 19]);
+  const usage = readFields(result.get(4), [2, 3, 4, 5, 9]);
+  const tokens = {
+    i: count(usage, 2),
+    o: count(usage, 3),
+    cw: count(usage, 4),
+    cr: count(usage, 5),
+    rz: count(usage, 9)
+  };
+  if (tokens.i + tokens.o + tokens.cw + tokens.cr === 0) return null;
+  const name = result.get(19);
+  const decoded = name instanceof Uint8Array && name.length <= 128 ? Buffer.from(name).toString("utf8") : "";
+  const model = /^[a-z0-9][a-z0-9_.:/-]*$/i.test(decoded) ? decoded : "unknown";
+  return { firstStep, model, tokens };
+}
+function readProjects(sqlite, root) {
+  const projects = /* @__PURE__ */ new Map();
+  let db;
+  try {
+    db = new sqlite.DatabaseSync((0, import_node_path7.join)(root, "conversation_summaries.db"), { readOnly: true });
+    const rows = db.prepare("SELECT conversation_id, workspace_uris FROM conversation_summaries").all();
+    for (const row of rows) {
+      let uris;
+      try {
+        uris = JSON.parse(row.workspace_uris);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(uris)) continue;
+      for (const uri of uris) {
+        if (typeof uri !== "string" || !uri.startsWith("file:")) continue;
+        try {
+          const project = (0, import_node_url.fileURLToPath)(uri);
+          if (project === "/" || /^[a-z]:[\\/]$/i.test(project) || project.includes("")) continue;
+          projects.set(row.conversation_id, project);
+          break;
+        } catch {
+        }
+      }
+    }
+  } catch {
+  } finally {
+    db == null ? void 0 : db.close();
+  }
+  return projects;
+}
+function readConversation(sqlite, file, sid, project, replayed) {
+  const db = new sqlite.DatabaseSync(file, { readOnly: true });
+  try {
+    db.exec("BEGIN");
+    const steps = db.prepare("SELECT idx, metadata FROM steps WHERE step_type = ?").all(PLANNER_RESPONSE);
+    const times = /* @__PURE__ */ new Map();
+    for (const row of steps) times.set(row.idx, readCreatedAt(row.metadata));
+    const calls = [];
+    const generations = db.prepare("SELECT data FROM gen_metadata ORDER BY idx").all();
+    for (const row of generations) {
+      const generation = readGeneration(row.data);
+      if (!generation) continue;
+      const created = times.get(generation.firstStep);
+      if (!created) continue;
+      const { model, tokens } = generation;
+      const key = JSON.stringify([created.seconds, created.nanos, model, tokens.i, tokens.o, tokens.cr, tokens.cw, tokens.rz]);
+      if (replayed.has(key)) continue;
+      replayed.add(key);
+      const t = created.seconds * 1e3 + Math.floor(created.nanos / 1e6);
+      calls.push({ t, m: model, p: project, s: sid, ...tokens, cost: 0, credits: 0 });
+    }
+    return calls;
+  } finally {
+    db.close();
+  }
+}
+function isUnsupportedDatabase(error) {
+  if (!(error instanceof Error) || !("errcode" in error)) return false;
+  const code = typeof error.errcode === "number" ? error.errcode & 255 : 0;
+  return code === 11 || code === 26 || code === 1 && /no such (?:table|column):/i.test(error.message);
+}
+async function scanAgy(state, shouldStop, root = (0, import_node_path7.join)((0, import_node_os5.homedir)(), ".gemini", "antigravity-cli")) {
+  var _a, _b, _c;
+  const directory = (0, import_node_path7.join)(root, "conversations");
+  const entries = await (0, import_promises3.readdir)(directory, { withFileTypes: true }).catch((error) => {
+    if (error.code !== "ENOENT") throw error;
+    return null;
+  });
+  if (!entries) {
+    (_a = state.recent)[AGY] ?? (_a[AGY] = []);
+    return;
+  }
+  const sqlite = await loadSqlite();
+  if (!sqlite) {
+    console.warn("[agent-usage] agy skipped: node:sqlite unavailable (needs Node >= 22.5)");
+    (_b = state.recent)[AGY] ?? (_b[AGY] = []);
+    return;
+  }
+  const projects = readProjects(sqlite, root);
+  const next = emptyState();
+  const replayed = /* @__PURE__ */ new Set();
+  let recent = [];
+  let read = 0;
+  let skipped = 0;
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const sid = (_c = DATABASE_NAME.exec(entry.name)) == null ? void 0 : _c[1];
+    if (!sid || !entry.isFile()) continue;
+    await new Promise((resolve2) => (0, import_node_timers.setImmediate)(resolve2));
+    if (shouldStop()) return;
+    const project = projects.get(sid) ?? "";
+    const file = (0, import_node_path7.join)(directory, entry.name);
+    let calls;
+    try {
+      calls = readConversation(sqlite, file, sid, project, replayed);
+    } catch (error) {
+      const present = await (0, import_promises3.stat)(file).then(() => true, (failure) => failure.code !== "ENOENT");
+      if (!present) continue;
+      if (!isUnsupportedDatabase(error)) throw error;
+      skipped += 1;
+      continue;
+    }
+    read += 1;
+    for (const call of calls) {
+      const delta = { ...call, r: 1 };
+      addBucket(next.buckets, localHourKey(call.t), AGY, call.m, project, delta);
+      applySession(next.sessions, AGY, sid, delta);
+    }
+    if (calls.length) {
+      recent = recent.concat(calls).sort((a, b) => a.t - b.t).slice(-MAX_RECENT_PER_AGENT);
+    }
+  }
+  if (skipped) {
+    console.warn(`[agent-usage] agy skipped ${skipped} corrupt or incompatible conversation database(s)`);
+    if (!read) return;
+  }
+  for (const key of Object.keys(state.buckets)) {
+    if (key.split("", 2)[1] === AGY) delete state.buckets[key];
+  }
+  for (const key of Object.keys(state.sessions)) {
+    if (key.startsWith(AGY + "")) delete state.sessions[key];
+  }
+  Object.assign(state.buckets, next.buckets);
+  Object.assign(state.sessions, next.sessions);
+  state.recent[AGY] = recent;
+}
+
 // server/scan/scanner.ts
 async function scanAll(state, callbacks, enabledHarnesses) {
   if (await filesShrank(state)) {
@@ -865,7 +1069,7 @@ async function scanAll(state, callbacks, enabledHarnesses) {
     collectRoots(piRoots()),
     collectRoots(codexRoots())
   ]);
-  const total = (on("claude") ? claudeFiles.length : 0) + (on("pi") ? piFiles.length : 0) + (on("codex") ? codexFiles.length : 0) + (on("opencode") ? 1 : 0);
+  const total = (on("claude") ? claudeFiles.length : 0) + (on("pi") ? piFiles.length : 0) + (on("codex") ? codexFiles.length : 0) + (on("opencode") ? 1 : 0) + (on(AGY) ? 1 : 0);
   let done = 0;
   let checkpointAt = Date.now();
   callbacks.onProgress(done, total);
@@ -902,6 +1106,15 @@ async function scanAll(state, callbacks, enabledHarnesses) {
     tick();
   }
   if (on("codex") && !await run(codexFiles, scanCodexFile)) return;
+  if (on(AGY)) {
+    if (callbacks.shouldStop()) return;
+    try {
+      await scanAgy(state, callbacks.shouldStop);
+    } catch {
+      console.warn("[agent-usage] agy scan could not read the local conversation databases");
+    }
+    tick();
+  }
   callbacks.onCheckpoint();
 }
 async function collectRoots(roots) {
@@ -915,7 +1128,7 @@ async function filesShrank(state) {
   for (const [path, file] of Object.entries(state.files)) {
     if (!file || !(file.offset > 0)) continue;
     try {
-      const info = await (0, import_promises3.stat)(path);
+      const info = await (0, import_promises4.stat)(path);
       if (info.isFile() && info.size < file.offset) return true;
     } catch {
     }
@@ -938,7 +1151,7 @@ function argValue(args, name) {
 }
 async function main() {
   const args = process.argv.slice(2);
-  const cacheDir = argValue(args, "--cache-dir") || (0, import_node_path7.join)((0, import_node_os5.homedir)(), ".cache", "agent-usage-plugin");
+  const cacheDir = argValue(args, "--cache-dir") || (0, import_node_path8.join)((0, import_node_os6.homedir)(), ".cache", "agent-usage-plugin");
   const fresh = args.includes("--fresh");
   process.stderr.write(`agent-usage collector: node ${process.version}, cache ${cacheDir}${fresh ? ", fresh" : ""}
 `);

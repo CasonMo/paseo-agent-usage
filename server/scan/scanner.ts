@@ -5,6 +5,7 @@ import { scanOpencode } from "./opencode";
 import { piRoots, scanPiFile } from "./pi";
 import type { ScanState } from "./state";
 import { listJsonlFiles } from "./util";
+import { AGY, scanAgy } from "./agy";
 
 export interface ScanCallbacks {
   shouldStop(): boolean;
@@ -27,7 +28,8 @@ export async function scanAll(state: ScanState, callbacks: ScanCallbacks, enable
     (on("claude") ? claudeFiles.length : 0) +
     (on("pi") ? piFiles.length : 0) +
     (on("codex") ? codexFiles.length : 0) +
-    (on("opencode") ? 1 : 0);
+    (on("opencode") ? 1 : 0) +
+    (on(AGY) ? 1 : 0);
   let done = 0;
   let checkpointAt = Date.now();
   callbacks.onProgress(done, total);
@@ -64,6 +66,15 @@ export async function scanAll(state: ScanState, callbacks: ScanCallbacks, enable
     tick();
   }
   if (on("codex") && !(await run(codexFiles, scanCodexFile))) return;
+  if (on(AGY)) {
+    if (callbacks.shouldStop()) return;
+    try {
+      await scanAgy(state, callbacks.shouldStop);
+    } catch {
+      console.warn("[agent-usage] agy scan could not read the local conversation databases");
+    }
+    tick();
+  }
   callbacks.onCheckpoint();
 }
 

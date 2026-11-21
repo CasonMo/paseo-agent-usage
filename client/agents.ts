@@ -3,6 +3,7 @@ export const AGENT_COLORS: Record<string, string> = {
   codex: "#4C8DFF",
   opencode: "#3E9B72",
   pi: "#8F6FD1",
+  agy: "#487F9B",
 };
 
 export const AGENT_SHORT: Record<string, string> = {
@@ -10,6 +11,7 @@ export const AGENT_SHORT: Record<string, string> = {
   codex: "Codex",
   opencode: "OpenCode",
   pi: "Pi",
+  agy: "Antigravity (agy)",
 };
 
 export const FALLBACK_COLOR = "#8A8F96";

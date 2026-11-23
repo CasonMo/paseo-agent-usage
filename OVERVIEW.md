@@ -7,12 +7,13 @@
 - Claude Code：`~/.claude/projects`（含 subagents）
 - Codex：`~/.codex/sessions` 与 `~/.codex/archived_sessions`
 - OpenCode：`~/.local/share/opencode/opencode.db`（通过 node:sqlite 只读；自动识别 1.x 的 `session`/`message` 与 2.x 的 `session_v2`/`session_message`，迁移期间按消息 ID 去重；reasoning token 计入输出，与计费口径一致）
+- Antigravity CLI（agy）：通过 Node 22.5+ 的 node:sqlite 只读访问 `~/.gemini/antigravity-cli/conversations/*.db` 的生成元数据和步骤时间戳，以及会话索引中的工作区路径。仅统计可读取的数据库中保留的调用，思考 Token 已计入输出，账单金额不可用。
 - Pi：`~/.pi/agent/sessions`（含 forks 与子会话目录；跨文件按消息去重，fork 复制段不重复计）
 
 界面：侧边栏底部「用量」行显示今日 token；点击打开全屏看板。看板包含 6 个预设页（总览、构成、效率、节奏、会话、对比），也支持自定义页面（空白新建或复制当前页，改名、排序、隐藏、删除；自定义页只在聚合视图生效，Agent 视图复用预设页）。每张图表都是卡片，可上移/下移、整行/半宽、隐藏或移除，布局按页面保存在本机偏好里。
 
 - 看板顶部展示可关闭的「开源共创」横幅，可直接前往 GitHub 提 Issue 或提 PR；关闭状态会持久化并永久隐藏该横幅，配置页仍保留按问题、功能需求和 Agent 接入分类的 Issue 模板入口
-- 顶部用紧凑工具栏提供设备选择（聚合 / 本机 / 各远端）、Agent 选择（总览 + Claude Code / Codex / OpenCode / Pi）、时间范围与粒度；页面内的页签和卡片负责分析内容
+- 顶部用紧凑工具栏提供设备选择（聚合 / 本机 / 各远端）、Agent 选择（总览 + Claude Code / Codex / OpenCode / Pi / Antigravity (agy)）、时间范围与粒度；页面内的页签和卡片负责分析内容
 - 总览：用量脉搏、趋势（全部/非缓存 Token 堆叠、请求、成本、7 日预测）、周期对比、异常日、Agent 份额、主机对比
 - 构成：Token 构成、模型/项目排行与集中度、Agent × 模型、项目 × Agent、矩形占比
 - 效率：缓存命中率、缓存读写、请求均量、输入输出结构、模型效率象限、成本趋势/效率、累计曲线
@@ -22,7 +23,7 @@
 - 图表交互：点按图表查看当期明细；卡片标题旁的圆圈问号可悬浮/点按查看说明；列表默认 Top 5/6，可展开；成本卡只统计有上报的 Agent；自定义范围的日期选择器默认收起，点“编辑日期”展开
 - 会话明细按会话 ID 聚合，单个 Agent 展示最近 200 个；请求日志底层每个 Agent 保留约 400 条、报告最多展示 120 条；两者每页 20 条
 
-刷新机制：首次扫描全量历史日志（本机约 30 秒，其间页面显示扫描进度），之后按文件增量刷新（约 1~2 秒）；Agent 回合结束后会自动触发防抖增量刷新。插件升级后（v0.3.0 起统计数据按小时与会话缓存）会有一次全量重扫。会话索引最多保留 8000 个最近会话（超出按会话末次活动时间淘汰）。
+刷新机制：首次扫描全量历史日志（本机约 30 秒，其间页面显示扫描进度），之后按文件增量刷新（约 1~2 秒），agy 每次重读会话用量以同步数据库修订；Agent 回合结束后会自动触发防抖增量刷新。插件升级后（v0.3.0 起统计数据按小时与会话缓存）会有一次全量重扫。会话索引最多保留 8000 个最近会话（超出按会话末次活动时间淘汰）。
 
 配置（用量页右上角「配置」或 Paseo 设置 → 插件）：
 
@@ -69,12 +70,13 @@ Data sources (read locally on the daemon host; remote machines are collected ove
 - Claude Code: `~/.claude/projects` (including subagents)
 - Codex: `~/.codex/sessions` and `~/.codex/archived_sessions`
 - OpenCode: `~/.local/share/opencode/opencode.db` (read-only via node:sqlite; detects the 1.x `session`/`message` and 2.x `session_v2`/`session_message` layouts, deduplicating by message id during a migration; reasoning tokens count as output, matching the billing basis)
+- Antigravity CLI (agy): reads only generation metadata and step timestamps from `~/.gemini/antigravity-cli/conversations/*.db` and workspace paths from the conversation index using node:sqlite on Node 22.5+. Usage reflects the calls retained in readable databases. Output includes thinking tokens. Billing amounts are unavailable.
 - Pi: `~/.pi/agent/sessions` (including forks and sub-session directories; messages are deduplicated across files, so copied fork segments are not counted twice)
 
 Interface: the "Usage" row at the bottom of the sidebar shows today's tokens; clicking it opens a full-screen dashboard. The dashboard has six preset pages (Overview, Composition, Efficiency, Rhythm, Sessions, Compare) and supports custom pages (create blank or duplicate the current page, rename, reorder, hide, delete; custom pages live in the aggregate view, while the agent view reuses the preset pages). Every chart is a card that can move up/down, switch full/half width, hide or be removed; layouts are saved per page in local preferences.
 
 - The dashboard header shows a dismissible open-source co-creation banner with direct GitHub issue and pull-request links; dismissal is persisted and hides the banner permanently, while Settings keeps the issue-template entries for bugs, feature requests, and new agents
-- Device selector (aggregate / local / each remote), agent selector (overview + Claude Code / Codex / OpenCode / Pi), range and granularity stay in a compact toolbar; page tabs and cards hold the analysis
+- Device selector (aggregate / local / each remote), agent selector (overview + Claude Code / Codex / OpenCode / Pi / Antigravity (agy)), range and granularity stay in a compact toolbar; page tabs and cards hold the analysis
 - Overview: usage pulse, token-type stack / requests / cost / 7-day forecast trend, period comparison, outlier days, agent share, host comparison
 - Composition: token mix, model/project ranking with concentration, agent × model and project × agent heatmaps, share map
 - Efficiency: cache hit and cache read/write, tokens per request, input/output structure, model efficiency map, cost trend/efficiency, cumulative usage
@@ -84,7 +86,7 @@ Interface: the "Usage" row at the bottom of the sidebar shows today's tokens; cl
 - Chart interaction: tap a chart for that period's detail; the circled question mark next to each card title shows its description on hover or tap; lists show top 5/6 with expand; cost cards only count agents that report cost; the custom-range calendar is collapsed behind "Edit dates"
 - Sessions are grouped by session ID; one agent shows the latest 200 sessions, the request log keeps about 400 calls per agent and reports up to 120; both paginate 20 rows
 
-Refresh: the first scan reads the full history (about 30 seconds locally, with progress shown on the page), after which files refresh incrementally (about 1-2 seconds); a debounced incremental refresh triggers automatically when an agent turn ends. After a plugin upgrade (from v0.3.0, statistics are cached per hour and per session) one full rescan runs. The session index keeps at most the 8,000 most recent sessions (older ones are evicted by last activity time).
+Refresh: the first scan reads the full history (about 30 seconds locally, with progress shown on the page), after which files refresh incrementally (about 1-2 seconds). Each refresh rebuilds the agy aggregates to reflect database revisions. A debounced incremental refresh triggers automatically when an agent turn ends. After a plugin upgrade (from v0.3.0, statistics are cached per hour and per session) one full rescan runs. The session index keeps at most the 8,000 most recent sessions (older ones are evicted by last activity time).
 
 Settings (the "Settings" entry at the top right of the usage page, or Paseo Settings → Plugins):
 

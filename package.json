@@ -1,7 +1,7 @@
 {
   "name": "paseo-agent-usage",
-  "version": "0.7.3",
-  "description": "Token usage statistics for coding agents from local session logs, with SSH collection, six analysis pages, custom dashboards, budgets, session details, and a dismissible GitHub issue/PR co-creation entry.",
+  "version": "0.7.4",
+  "description": "Token usage statistics for coding agents from local session logs, including Antigravity CLI, with SSH collection, six analysis pages, custom dashboards, budgets, session details, and a dismissible GitHub issue/PR co-creation entry.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,7 +28,8 @@
     "check:opencode": "tsx scripts/check-opencode.ts",
     "check:prefs": "tsx scripts/check-prefs.ts",
     "check:report": "tsx scripts/check-report.ts",
-    "check": "npm run typecheck && npm run check:dashboard && npm run check:report && npm run check:prefs && npm run check:opencode"
+    "check:agy": "tsx scripts/check-agy.ts",
+    "check": "npm run typecheck && npm run check:dashboard && npm run check:report && npm run check:prefs && npm run check:opencode && npm run check:agy"
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.13.0-beta.1",

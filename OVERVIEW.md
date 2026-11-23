@@ -6,7 +6,7 @@
 
 - Claude Code：`~/.claude/projects`（含 subagents）
 - Codex：`~/.codex/sessions` 与 `~/.codex/archived_sessions`
-- OpenCode：`~/.local/share/opencode/opencode.db`（通过 node:sqlite 只读；reasoning token 计入输出，与计费口径一致）
+- OpenCode：`~/.local/share/opencode/opencode.db`（通过 node:sqlite 只读；自动识别 1.x 的 `session`/`message` 与 2.x 的 `session_v2`/`session_message`，迁移期间按消息 ID 去重；reasoning token 计入输出，与计费口径一致）
 - Antigravity CLI（agy）：通过 Node 22.5+ 的 node:sqlite 只读访问 `~/.gemini/antigravity-cli/conversations/*.db` 的生成元数据和步骤时间戳，以及会话索引中的工作区路径。仅统计可读取的数据库中保留的调用，思考 Token 已计入输出，账单金额不可用。
 - Pi：`~/.pi/agent/sessions`（含 forks 与子会话目录；跨文件按消息去重，fork 复制段不重复计）
 
@@ -69,7 +69,7 @@ Data sources (read locally on the daemon host; remote machines are collected ove
 
 - Claude Code: `~/.claude/projects` (including subagents)
 - Codex: `~/.codex/sessions` and `~/.codex/archived_sessions`
-- OpenCode: `~/.local/share/opencode/opencode.db` (read-only via node:sqlite; reasoning tokens count as output, matching the billing basis)
+- OpenCode: `~/.local/share/opencode/opencode.db` (read-only via node:sqlite; detects the 1.x `session`/`message` and 2.x `session_v2`/`session_message` layouts, deduplicating by message id during a migration; reasoning tokens count as output, matching the billing basis)
 - Antigravity CLI (agy): reads only generation metadata and step timestamps from `~/.gemini/antigravity-cli/conversations/*.db` and workspace paths from the conversation index using node:sqlite on Node 22.5+. Usage reflects the calls retained in readable databases. Output includes thinking tokens. Billing amounts are unavailable.
 - Pi: `~/.pi/agent/sessions` (including forks and sub-session directories; messages are deduplicated across files, so copied fork segments are not counted twice)
 

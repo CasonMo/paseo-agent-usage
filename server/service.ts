@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { dashboardConfigSchema } from "../shared/usage";
+import { AGENT_IDS, AGENT_LABELS, dashboardConfigSchema } from "../shared/usage";
 import type { UsageAgentReport, UsageAgentSetItem, UsageAgentToggle, UsageGranularity, UsageHostForm, UsageHostListItem, UsagePrefs, UsageRangeKey, UsageReport } from "../shared/usage";
 import { buildAgentReport, buildReport, type HostView } from "./report";
 import { setServerLocale, st } from "./i18n";
@@ -38,18 +38,13 @@ const HOST_MIN_INTERVAL_MS = 10 * 60 * 1000;
 const HOSTS_FILE = "hosts.json";
 const AGENTS_FILE = "agents.json";
 const PREFS_FILE = "prefs.json";
-const AGENT_ORDER = ["claude", "codex", "opencode", "pi", "agy"];
-const AGENT_LABELS: Record<string, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  opencode: "OpenCode",
-  pi: "Pi",
-  agy: "Antigravity (agy)",
-};
+const AGENT_ORDER = AGENT_IDS;
 
 /** Agents included in statistics and scanning. */
 function defaultAgentsConfig(): Record<string, boolean> {
-  return { claude: true, codex: true, opencode: true, pi: true, agy: true };
+  const config: Record<string, boolean> = {};
+  for (const id of AGENT_ORDER) config[id] = true;
+  return config;
 }
 
 function defaultPrefs(): UsagePrefs {

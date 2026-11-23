@@ -1,5 +1,6 @@
 import { stat } from "node:fs/promises";
 import { claudeRoots, scanClaudeFile } from "./claude";
+import { codebuddyRoots, scanCodebuddyFile } from "./codebuddy";
 import { codexRoots, scanCodexFile } from "./codex";
 import { scanOpencode } from "./opencode";
 import { piRoots, scanPiFile } from "./pi";
@@ -19,15 +20,17 @@ export async function scanAll(state: ScanState, callbacks: ScanCallbacks, enable
     resetCounters(state);
   }
   const on = (id: string) => !enabledHarnesses || enabledHarnesses.has(id);
-  const [claudeFiles, piFiles, codexFiles] = await Promise.all([
+  const [claudeFiles, piFiles, codexFiles, codebuddyFiles] = await Promise.all([
     collectRoots(claudeRoots()),
     collectRoots(piRoots()),
     collectRoots(codexRoots()),
+    collectRoots(codebuddyRoots()),
   ]);
   const total =
     (on("claude") ? claudeFiles.length : 0) +
     (on("pi") ? piFiles.length : 0) +
     (on("codex") ? codexFiles.length : 0) +
+    (on("codebuddy") ? codebuddyFiles.length : 0) +
     (on("opencode") ? 1 : 0) +
     (on(AGY) ? 1 : 0);
   let done = 0;
@@ -56,6 +59,7 @@ export async function scanAll(state: ScanState, callbacks: ScanCallbacks, enable
   };
   if (on("claude") && !(await run(claudeFiles, scanClaudeFile))) return;
   if (on("pi") && !(await run(piFiles, scanPiFile))) return;
+  if (on("codebuddy") && !(await run(codebuddyFiles, scanCodebuddyFile))) return;
   if (on("opencode")) {
     if (callbacks.shouldStop()) return;
     try {

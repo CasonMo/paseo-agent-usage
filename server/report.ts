@@ -1,15 +1,10 @@
 import type { UsageAgent, UsageAgentReport, UsageCalendarStats, UsageGranularity, UsageHistogramBucket, UsagePairMatrices, UsageRangeKey, UsageReport, UsageRequestStats, UsageSessionItem, UsageSessionStats, UsageTimeMatrix, UsageTotals } from "../shared/usage";
+import { AGENT_IDS, AGENT_LABELS } from "../shared/usage";
 import type { CallRecord, SessionEntry, UsageBucket, ScanState } from "./scan/state";
 import { localHourKey } from "./scan/util";
 
-const HARNESS_ORDER = ["claude", "codex", "opencode", "pi", "agy"];
-const HARNESS_LABELS: Record<string, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  opencode: "OpenCode",
-  pi: "Pi",
-  agy: "Antigravity (agy)",
-};
+const HARNESS_ORDER = AGENT_IDS;
+const HARNESS_LABELS = AGENT_LABELS;
 const MAX_MODELS = 60;
 const MAX_PROJECTS = 60;
 const MAX_AGENT_MODELS = 30;

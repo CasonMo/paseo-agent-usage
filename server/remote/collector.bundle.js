@@ -154,7 +154,7 @@ function sanitizeSessions(raw) {
   return sessions;
 }
 async function loadState(dir) {
-  var _a, _b, _c, _d, _e;
+  var _a, _b, _c, _d, _e, _f, _g, _h;
   try {
     const text = await (0, import_promises.readFile)((0, import_node_path.join)(dir, "state.json"), "utf8");
     const parsed = JSON.parse(text);
@@ -166,13 +166,16 @@ async function loadState(dir) {
     state.recent = parsed.recent ?? {};
     state.opencode = {
       watermark: finite((_a = parsed.opencode) == null ? void 0 : _a.watermark),
-      lastId: typeof ((_b = parsed.opencode) == null ? void 0 : _b.lastId) === "string" ? parsed.opencode.lastId : ""
+      lastId: typeof ((_b = parsed.opencode) == null ? void 0 : _b.lastId) === "string" ? parsed.opencode.lastId : "",
+      legacyWatermark: typeof ((_c = parsed.opencode) == null ? void 0 : _c.legacyWatermark) === "number" ? parsed.opencode.legacyWatermark : void 0,
+      legacyLastId: typeof ((_d = parsed.opencode) == null ? void 0 : _d.legacyLastId) === "string" ? parsed.opencode.legacyLastId : void 0,
+      seen: Array.isArray((_e = parsed.opencode) == null ? void 0 : _e.seen) ? parsed.opencode.seen.filter((id) => typeof id === "string") : void 0
     };
-    state.pi = { seen: Array.isArray((_c = parsed.pi) == null ? void 0 : _c.seen) ? parsed.pi.seen.filter((k) => typeof k === "string") : [] };
+    state.pi = { seen: Array.isArray((_f = parsed.pi) == null ? void 0 : _f.seen) ? parsed.pi.seen.filter((k) => typeof k === "string") : [] };
     state.hosts = parsed.hosts ?? {};
     state.meta = {
-      lastScanAt: typeof ((_d = parsed.meta) == null ? void 0 : _d.lastScanAt) === "number" ? parsed.meta.lastScanAt : null,
-      scanError: typeof ((_e = parsed.meta) == null ? void 0 : _e.scanError) === "string" ? parsed.meta.scanError : null
+      lastScanAt: typeof ((_g = parsed.meta) == null ? void 0 : _g.lastScanAt) === "number" ? parsed.meta.lastScanAt : null,
+      scanError: typeof ((_h = parsed.meta) == null ? void 0 : _h.scanError) === "string" ? parsed.meta.scanError : null
     };
     return state;
   } catch {
@@ -614,6 +617,10 @@ var import_node_module = require("module");
 var import_node_os3 = require("os");
 var import_node_path5 = require("path");
 var OPENCODE = "opencode";
+var SEEN_LIMIT = 1e4;
+var INCOMPLETE_GRACE_MS = 60 * 60 * 1e3;
+var BATCH_SIZE = 4e3;
+var MAX_BATCHES = 500;
 var sqliteModule;
 async function loadSqlite() {
   if (sqliteModule !== void 0) return sqliteModule;
@@ -630,9 +637,130 @@ function opencodeDbPath(env = process.env) {
   const dataHome = ((_a = env.XDG_DATA_HOME) == null ? void 0 : _a.trim()) || (0, import_node_path5.join)((0, import_node_os3.homedir)(), ".local", "share");
   return (0, import_node_path5.join)(dataHome, "opencode", "opencode.db");
 }
-async function scanOpencode(state) {
+function hasTable(db, name) {
+  try {
+    return db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1").all(name).length > 0;
+  } catch {
+    return false;
+  }
+}
+function parseData(value) {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function modelId(data, fallback) {
+  const direct = data.modelID;
+  if (typeof direct === "string" && direct) return direct;
+  const model = data.model;
+  if (typeof model === "string" && model) return model;
+  if (model && typeof model === "object") {
+    if (typeof model.id === "string" && model.id) return model.id;
+    if (typeof model.modelID === "string" && model.modelID) return model.modelID;
+    if (typeof model.providerID === "string" && model.providerID) return model.providerID;
+  }
+  if (typeof fallback === "string" && fallback) {
+    try {
+      const parsed = JSON.parse(fallback);
+      if (parsed && typeof parsed === "object" && typeof parsed.id === "string" && parsed.id) return parsed.id;
+    } catch {
+    }
+  }
+  return "unknown";
+}
+function projectPath(data, ...fallbacks) {
+  const path = data.path;
+  if (path && typeof path === "object") {
+    if (typeof path.cwd === "string" && path.cwd) return path.cwd;
+    if (typeof path.root === "string" && path.root) return path.root;
+  }
+  for (const value of fallbacks) if (typeof value === "string" && value) return value;
+  return "";
+}
+function parseCall(row, data, v2, now) {
   var _a, _b;
-  const path = opencodeDbPath();
+  if (!v2 && data.role !== "assistant") return null;
+  const tokens = data.tokens;
+  if (!tokens || typeof tokens !== "object") return null;
+  const cache = tokens.cache && typeof tokens.cache === "object" ? tokens.cache : {};
+  const input = num(tokens.input);
+  const output = num(tokens.output);
+  const reasoning = num(tokens.reasoning);
+  const cacheRead = num(cache.read);
+  const cacheWrite = num(cache.write);
+  const cost = Math.max(0, num(data.cost));
+  const hasUsage = input + output + reasoning + cacheRead + cacheWrite > 0 || cost > 0;
+  const isCompaction = v2 && row.message_type === "compaction";
+  const completedAt = num((_a = data.time) == null ? void 0 : _a.completed);
+  const status = typeof data.status === "string" ? data.status : "";
+  const terminalStatus = status === "completed" || status === "failed";
+  const stale = num(row.time_updated) > 0 && now - num(row.time_updated) > INCOMPLETE_GRACE_MS;
+  const complete = (isCompaction ? terminalStatus : completedAt > 0) || stale && hasUsage;
+  return {
+    id: typeof row.id === "string" ? row.id : "",
+    ts: num((_b = data.time) == null ? void 0 : _b.created) || num(row.time_created),
+    session: typeof row.session_id === "string" ? row.session_id : "",
+    model: modelId(data),
+    project: projectPath(data),
+    input,
+    output,
+    reasoning,
+    cacheRead,
+    cacheWrite,
+    cost,
+    complete
+  };
+}
+function countCall(state, call, seen, seenOrder) {
+  if (!call.complete) return;
+  if (call.id && seen.has(call.id)) return;
+  const total = call.input + call.output + call.reasoning + call.cacheRead + call.cacheWrite;
+  if (total <= 0 && call.cost <= 0) return;
+  const outputWithReasoning = call.output + call.reasoning;
+  addBucket(state.buckets, localHourKey(call.ts), OPENCODE, call.model, call.project, {
+    r: 1,
+    i: call.input,
+    o: outputWithReasoning,
+    cr: call.cacheRead,
+    cw: call.cacheWrite,
+    rz: call.reasoning,
+    cost: call.cost
+  });
+  applySession(state.sessions, OPENCODE, call.session, {
+    t: call.ts,
+    r: 1,
+    p: call.project,
+    i: call.input,
+    o: outputWithReasoning,
+    cr: call.cacheRead,
+    cw: call.cacheWrite,
+    rz: call.reasoning,
+    cost: call.cost,
+    title: call.title
+  });
+  recordCall(state, OPENCODE, {
+    t: call.ts,
+    m: call.model,
+    p: call.project,
+    s: call.session,
+    i: call.input,
+    o: outputWithReasoning,
+    cr: call.cacheRead,
+    cw: call.cacheWrite,
+    rz: call.reasoning,
+    cost: call.cost,
+    credits: 0
+  });
+  if (call.id) {
+    seen.add(call.id);
+    seenOrder.push(call.id);
+  }
+}
+async function scanOpencode(state, path = opencodeDbPath()) {
   if (!(0, import_node_fs.existsSync)(path)) return;
   const sqlite = await loadSqlite();
   if (!sqlite) {
@@ -647,89 +775,155 @@ async function scanOpencode(state) {
       console.warn("[agent-usage] opencode skipped: cannot open the database read-only", error);
       return;
     }
-    let cursorTime = state.opencode.watermark;
-    let cursorId = state.opencode.lastId ?? "";
-    const sessionTitles = /* @__PURE__ */ new Map();
-    try {
-      const titleStatement = db.prepare("SELECT id, title FROM session WHERE title IS NOT NULL AND title <> ''");
-      for (const row of titleStatement.all()) {
-        if (typeof row.id === "string" && typeof row.title === "string") sessionTitles.set(row.id, clipTitle(row.title));
-      }
-    } catch {
-    }
-    const statement = db.prepare(
-      "SELECT id, session_id, time_created, time_updated, data FROM message WHERE time_updated > ? OR (time_updated = ? AND id > ?) ORDER BY time_updated ASC, id ASC LIMIT 4000"
-    );
-    for (let batch = 0; batch < 500; batch += 1) {
-      const rows = statement.all(cursorTime, cursorTime, cursorId);
-      if (rows.length === 0) break;
-      for (const row of rows) {
-        const id = typeof row.id === "string" ? row.id : "";
-        const updated = num(row.time_updated);
-        if (updated > cursorTime || updated === cursorTime && id > cursorId) {
-          cursorTime = updated;
-          cursorId = id;
-        }
-        let data;
+    const hasV2Messages = hasTable(db, "session_message");
+    const hasV2Sessions = hasTable(db, "session_v2");
+    const hasV1Messages = hasTable(db, "message");
+    const hasV1Sessions = hasTable(db, "session");
+    if (!hasV2Messages && !hasV1Messages) return;
+    const seen = new Set(state.opencode.seen ?? []);
+    const seenOrder = [...state.opencode.seen ?? []];
+    const now = Date.now();
+    let watermark = state.opencode.watermark;
+    let lastId = state.opencode.lastId ?? "";
+    let legacyWatermark = state.opencode.legacyWatermark ?? watermark;
+    let legacyLastId = state.opencode.legacyLastId ?? lastId;
+    let holdWatermark = null;
+    let holdLegacy = null;
+    if (hasV1Messages) {
+      const titles = /* @__PURE__ */ new Map();
+      if (hasV1Sessions) {
         try {
-          data = JSON.parse(row.data);
+          const titleStatement = db.prepare("SELECT id, title FROM session WHERE title IS NOT NULL AND title <> ''");
+          for (const row of titleStatement.all()) {
+            if (typeof row.id === "string" && typeof row.title === "string") titles.set(row.id, clipTitle(row.title));
+          }
         } catch {
-          continue;
         }
-        if ((data == null ? void 0 : data.role) !== "assistant") continue;
-        const tokens = data.tokens ?? {};
-        const cache = tokens.cache ?? {};
-        const input = num(tokens.input);
-        const output = num(tokens.output);
-        const reasoning = num(tokens.reasoning);
-        const cacheRead = num(cache.read);
-        const cacheWrite = num(cache.write);
-        const cost = typeof data.cost === "number" && data.cost > 0 ? data.cost : 0;
-        if (input + output + reasoning + cacheRead + cacheWrite <= 0 && cost <= 0) continue;
-        const ts = num((_a = data.time) == null ? void 0 : _a.created) || num(row.time_created);
-        const model = typeof data.modelID === "string" && data.modelID ? data.modelID : "unknown";
-        const project = typeof ((_b = data.path) == null ? void 0 : _b.cwd) === "string" ? data.path.cwd : "";
-        const outputWithReasoning = output + reasoning;
-        const sid = typeof row.session_id === "string" ? row.session_id : "";
-        addBucket(state.buckets, localHourKey(ts), OPENCODE, model, project, {
-          r: 1,
-          i: input,
-          o: outputWithReasoning,
-          cr: cacheRead,
-          cw: cacheWrite,
-          rz: reasoning,
-          cost
-        });
-        applySession(state.sessions, OPENCODE, sid, {
-          t: ts,
-          r: 1,
-          p: project,
-          i: input,
-          o: outputWithReasoning,
-          cr: cacheRead,
-          cw: cacheWrite,
-          rz: reasoning,
-          cost,
-          title: sessionTitles.get(sid)
-        });
-        recordCall(state, OPENCODE, {
-          t: ts,
-          m: model,
-          p: project,
-          s: sid,
-          i: input,
-          o: outputWithReasoning,
-          cr: cacheRead,
-          cw: cacheWrite,
-          rz: reasoning,
-          cost,
-          credits: 0
-        });
       }
-      if (rows.length < 4e3) break;
+      let cursorTime = hasV2Messages ? legacyWatermark : watermark;
+      let cursorId = hasV2Messages ? legacyLastId : lastId;
+      const statement = db.prepare(
+        `SELECT id, session_id, time_created, time_updated, data FROM message
+         WHERE time_updated > ? OR (time_updated = ? AND id > ?)
+         ORDER BY time_updated ASC, id ASC LIMIT ${BATCH_SIZE}`
+      );
+      let maxTime = cursorTime;
+      let maxId = cursorId;
+      for (let batch = 0; batch < MAX_BATCHES; batch += 1) {
+        const rows = statement.all(cursorTime, cursorTime, cursorId);
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          const id = typeof row.id === "string" ? row.id : "";
+          const updated = num(row.time_updated);
+          if (updated > maxTime || updated === maxTime && id > maxId) {
+            maxTime = updated;
+            maxId = id;
+          }
+          const data = parseData(row.data);
+          if (!data) continue;
+          const call = parseCall(row, data, false, now);
+          if (!call) continue;
+          if (!call.complete) {
+            if (updated > 0 && (call.input + call.output + call.reasoning + call.cacheRead + call.cacheWrite > 0 || call.cost > 0)) {
+              if (holdLegacy === null || updated < holdLegacy) holdLegacy = updated;
+            }
+            continue;
+          }
+          call.title = titles.get(call.session);
+          countCall(state, call, seen, seenOrder);
+        }
+        cursorTime = maxTime;
+        cursorId = maxId;
+        if (rows.length < BATCH_SIZE) break;
+      }
+      if (hasV2Messages) {
+        legacyWatermark = maxTime;
+        legacyLastId = maxId;
+      } else {
+        watermark = maxTime;
+        lastId = maxId;
+        legacyWatermark = watermark;
+        legacyLastId = lastId;
+      }
     }
-    state.opencode.watermark = cursorTime;
-    state.opencode.lastId = cursorId;
+    if (hasV2Messages) {
+      let cursorTime = watermark;
+      let cursorId = lastId;
+      const modelCache = /* @__PURE__ */ new Map();
+      const statement = db.prepare(
+        hasV2Sessions ? `SELECT m.id, m.session_id, m.time_created, m.time_updated, m.data, m.type AS message_type,
+                    s.title AS session_title, s.directory AS session_directory,
+                    s.model AS session_model, p.worktree AS project_worktree
+             FROM session_message m
+             LEFT JOIN session_v2 s ON s.id = m.session_id
+             LEFT JOIN project p ON p.id = s.project_id
+             WHERE (m.time_updated > ? OR (m.time_updated = ? AND m.id > ?))
+               AND m.type IN ('assistant', 'compaction')
+             ORDER BY m.time_updated ASC, m.id ASC LIMIT ${BATCH_SIZE}` : `SELECT m.id, m.session_id, m.time_created, m.time_updated, m.data, m.type AS message_type
+             FROM session_message m
+             WHERE (m.time_updated > ? OR (m.time_updated = ? AND m.id > ?))
+               AND m.type IN ('assistant', 'compaction')
+             ORDER BY m.time_updated ASC, m.id ASC LIMIT ${BATCH_SIZE}`
+      );
+      let maxTime = cursorTime;
+      let maxId = cursorId;
+      for (let batch = 0; batch < MAX_BATCHES; batch += 1) {
+        const rows = statement.all(cursorTime, cursorTime, cursorId);
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          const id = typeof row.id === "string" ? row.id : "";
+          const updated = num(row.time_updated);
+          if (updated > maxTime || updated === maxTime && id > maxId) {
+            maxTime = updated;
+            maxId = id;
+          }
+          const data = parseData(row.data);
+          if (!data) continue;
+          const call = parseCall(row, data, true, now);
+          if (!call) continue;
+          if (!call.complete) {
+            if (updated > 0 && (call.input + call.output + call.reasoning + call.cacheRead + call.cacheWrite > 0 || call.cost > 0)) {
+              if (holdWatermark === null || updated < holdWatermark) holdWatermark = updated;
+            }
+            continue;
+          }
+          if (row.session_title) call.title = clipTitle(row.session_title);
+          call.project = projectPath(data, row.session_directory, row.project_worktree);
+          if (call.model === "unknown") {
+            if (!modelCache.has(call.session)) modelCache.set(call.session, modelId({}, row.session_model));
+            call.model = modelCache.get(call.session) || "unknown";
+          }
+          countCall(state, call, seen, seenOrder);
+        }
+        cursorTime = maxTime;
+        cursorId = maxId;
+        if (rows.length < BATCH_SIZE) break;
+      }
+      watermark = maxTime;
+      lastId = maxId;
+    }
+    if (holdWatermark !== null) {
+      watermark = Math.max(0, holdWatermark - 1);
+      lastId = "";
+    }
+    if (holdLegacy !== null) {
+      if (hasV2Messages) {
+        legacyWatermark = Math.max(0, holdLegacy - 1);
+        legacyLastId = "";
+      } else {
+        watermark = Math.max(0, holdLegacy - 1);
+        lastId = "";
+      }
+    }
+    if (!hasV1Messages) {
+      legacyWatermark = watermark;
+      legacyLastId = lastId;
+    }
+    state.opencode.watermark = watermark;
+    state.opencode.lastId = lastId;
+    state.opencode.legacyWatermark = legacyWatermark;
+    state.opencode.legacyLastId = legacyLastId;
+    state.opencode.seen = seenOrder.length > SEEN_LIMIT ? seenOrder.slice(-SEEN_LIMIT) : seenOrder;
   } finally {
     db == null ? void 0 : db.close();
   }

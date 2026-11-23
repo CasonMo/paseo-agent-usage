@@ -91,7 +91,7 @@ async function check(): Promise<void> {
         { m: "cb-test-model", i: 0, o: 50, cr: 500, cw: 0, rz: 0 },
       ],
     );
-    // Seconds timestamps were normalized to milliseconds (year 2027, not 1970).
+    // Seconds timestamps were normalized to milliseconds (2023, not 1970).
     assert.ok((state.recent.codebuddy ?? []).every((call) => call.t > 1e12));
     assert.deepEqual(totals(state), { r: 2, i: 600, o: 150, cr: 900, cw: 0, rz: 20 });
 
@@ -107,6 +107,18 @@ async function check(): Promise<void> {
 
     // Appending a new request counts only the new row.
     await writeFile(file, jsonl([usageRow({ messageId: "msg-c", timestamp: 1_700_000_100_000, input: 10, cached: 0, output: 5, reasoning: 0 })]), { flag: "a" });
+    await scanCodebuddyFile(state, file);
+    assert.deepEqual(totals(state), { r: 3, i: 610, o: 155, cr: 900, cw: 0, rz: 20 });
+
+    // Non-positive timestamps are dropped, so no phantom 1970 bucket appears.
+    await writeFile(
+      file,
+      jsonl([
+        usageRow({ messageId: "msg-zero", timestamp: 0, input: 999, cached: 0, output: 999, reasoning: 0 }),
+        usageRow({ messageId: "msg-neg", timestamp: -5000, input: 999, cached: 0, output: 999, reasoning: 0 }),
+      ]),
+      { flag: "a" },
+    );
     await scanCodebuddyFile(state, file);
     assert.deepEqual(totals(state), { r: 3, i: 610, o: 155, cr: 900, cw: 0, rz: 20 });
 

@@ -429,8 +429,8 @@ function toMillis(value) {
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (/^\d+$/.test(trimmed)) {
-      const seconds = Number(trimmed);
-      return seconds < 1e12 ? seconds * 1e3 : seconds;
+      const numeric = Number(trimmed);
+      return numeric < 1e12 ? numeric * 1e3 : numeric;
     }
     return Date.parse(trimmed);
   }
@@ -462,7 +462,7 @@ async function scanCodebuddyFile(state, path) {
   const previousState = state.files[path];
   let sessionTitle = (previousState == null ? void 0 : previousState.sessionTitle) ?? "";
   const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
-    if (!line.includes('"role"') && !line.includes('"usage"')) return;
+    if (!line.includes('"usage"') && (sessionTitle || !line.includes('"role"'))) return;
     let entry;
     try {
       entry = JSON.parse(line);
@@ -478,13 +478,13 @@ async function scanCodebuddyFile(state, path) {
     const usage = provider.usage;
     if (!usage || typeof usage !== "object") return;
     const ts = toMillis(entry.timestamp);
-    if (!Number.isFinite(ts)) return;
+    if (!Number.isFinite(ts) || ts <= 0) return;
     const sid = typeof entry.sessionId === "string" ? entry.sessionId : "";
     const project = typeof entry.cwd === "string" ? entry.cwd : "";
     const model = typeof provider.model === "string" && provider.model ? provider.model : typeof provider.requestModelId === "string" && provider.requestModelId ? provider.requestModelId : "unknown";
     const inputTotal = num(usage.inputTokens);
     const cacheRead = Math.min(sumDetail(usage.inputTokensDetails, "cached_tokens"), inputTotal);
-    const input = Math.max(0, inputTotal - cacheRead);
+    const input = inputTotal - cacheRead;
     const output = num(usage.outputTokens);
     const reasoning = sumDetail(usage.outputTokensDetails, "reasoning_tokens");
     addBucket(state.buckets, localHourKey(ts), CODEBUDDY, model, project, {

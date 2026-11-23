@@ -33,8 +33,8 @@ function toMillis(value: unknown): number {
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (/^\d+$/.test(trimmed)) {
-      const seconds = Number(trimmed);
-      return seconds < 1e12 ? seconds * 1000 : seconds;
+      const numeric = Number(trimmed);
+      return numeric < 1e12 ? numeric * 1000 : numeric;
     }
     return Date.parse(trimmed);
   }
@@ -75,7 +75,10 @@ export async function scanCodebuddyFile(state: ScanState, path: string): Promise
   const previousState = state.files[path];
   let sessionTitle = previousState?.sessionTitle ?? "";
   const result = await forEachNewLine(path, previousState?.offset ?? 0, (line) => {
-    if (!line.includes('"role"') && !line.includes('"usage"')) return;
+    // Usage rows are always parsed. Non-usage rows are only parsed while the
+    // session title is still unknown (the title needs just the first user turn),
+    // so the rest of a title-known file skips JSON.parse.
+    if (!line.includes('"usage"') && (sessionTitle || !line.includes('"role"'))) return;
     let entry: any;
     try {
       entry = JSON.parse(line);
@@ -92,8 +95,10 @@ export async function scanCodebuddyFile(state: ScanState, path: string): Promise
     if (!usage || typeof usage !== "object") return;
     // Each usage row is a finished request with a unique message id (validated
     // across real logs), so it is added directly with no snapshot-dedup pass.
+    // Reject non-positive timestamps so a pending/placeholder row cannot create
+    // a phantom 1970 bucket.
     const ts = toMillis(entry.timestamp);
-    if (!Number.isFinite(ts)) return;
+    if (!Number.isFinite(ts) || ts <= 0) return;
 
     const sid = typeof entry.sessionId === "string" ? entry.sessionId : "";
     const project = typeof entry.cwd === "string" ? entry.cwd : "";
@@ -109,7 +114,7 @@ export async function scanCodebuddyFile(state: ScanState, path: string): Promise
     // Cap the cache read at the reported input so totals cannot be overstated.
     const inputTotal = num(usage.inputTokens);
     const cacheRead = Math.min(sumDetail(usage.inputTokensDetails, "cached_tokens"), inputTotal);
-    const input = Math.max(0, inputTotal - cacheRead);
+    const input = inputTotal - cacheRead;
     const output = num(usage.outputTokens);
     const reasoning = sumDetail(usage.outputTokensDetails, "reasoning_tokens");
 

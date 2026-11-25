@@ -73,7 +73,7 @@ function groupModels(models: readonly UsageModelItem[]): RankGroup[] {
     const group = map.get(key) ?? { key, label: key, value: 0, requests: 0, cost: 0, agents: new Set<string>() };
     group.value += model.totalTokens;
     group.requests += model.requests;
-    group.cost += model.reportedCostUsd;
+    group.cost += model.costUsd;
     group.agents.add(model.agent);
     map.set(key, group);
   }

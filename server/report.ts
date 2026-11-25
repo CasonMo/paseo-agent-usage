@@ -1,6 +1,22 @@
-import type { UsageAgent, UsageAgentReport, UsageCalendarStats, UsageGranularity, UsageHistogramBucket, UsagePairMatrices, UsageRangeKey, UsageReport, UsageRequestStats, UsageSessionItem, UsageSessionStats, UsageTimeMatrix, UsageTotals } from "../shared/usage";
+import { estimateTokenCost, type CustomModelPrice } from "../shared/pricing";
+import type {
+  CostSource,
+  UsageAgent,
+  UsageAgentReport,
+  UsageCalendarStats,
+  UsageGranularity,
+  UsageHistogramBucket,
+  UsagePairMatrices,
+  UsageRangeKey,
+  UsageReport,
+  UsageRequestStats,
+  UsageSessionItem,
+  UsageSessionStats,
+  UsageTimeMatrix,
+  UsageTotals,
+} from "../shared/usage";
 import { AGENT_IDS, AGENT_LABELS } from "../shared/usage";
-import type { CallRecord, SessionEntry, UsageBucket, ScanState } from "./scan/state";
+import type { CallRecord, ScanState, SessionEntry, UsageBucket } from "./scan/state";
 import { localHourKey } from "./scan/util";
 
 const HARNESS_ORDER = AGENT_IDS;
@@ -39,7 +55,12 @@ interface Aggregate {
   cacheRead: number;
   cacheWrite: number;
   reasoning: number;
+  reportedCost: number;
+  estimatedCost: number;
   cost: number;
+  cacheSavings: number;
+  unpricedTokens: number;
+  unpricedModels: Set<string>;
   credits: number;
 }
 
@@ -49,21 +70,117 @@ export interface ScanInfo {
   total: number;
 }
 
-const zero = (): Aggregate => ({ requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, cost: 0, credits: 0 });
+const zero = (): Aggregate => ({
+  requests: 0,
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  reasoning: 0,
+  reportedCost: 0,
+  estimatedCost: 0,
+  cost: 0,
+  cacheSavings: 0,
+  unpricedTokens: 0,
+  unpricedModels: new Set(),
+  credits: 0,
+});
 const tokenTotal = (aggregate: Aggregate): number => aggregate.input + aggregate.output + aggregate.cacheRead + aggregate.cacheWrite;
 
-function addAggregate(target: Aggregate, bucket: UsageBucket): void {
+interface BucketPriceResult {
+  reportedCostUsd: number;
+  estimatedCostUsd: number;
+  costUsd: number;
+  cacheSavingsUsd: number;
+  unpricedTokens: number;
+  source: CostSource;
+}
+
+function priceBucket(model: string, bucket: UsageBucket, customPrices?: readonly CustomModelPrice[]): BucketPriceResult {
+  if (bucket.cost > 0 && bucket.bt !== undefined) {
+    const unbilledInput = Math.max(0, bucket.i - bucket.bt[0]);
+    const unbilledOutput = Math.max(0, bucket.o - bucket.bt[1]);
+    const unbilledCacheRead = Math.max(0, bucket.cr - bucket.bt[2]);
+    const unbilledCacheWrite = Math.max(0, bucket.cw - bucket.bt[3]);
+    const full = estimateTokenCost(
+      model,
+      { input: bucket.i, output: bucket.o, cacheRead: bucket.cr, cacheWrite: bucket.cw, reportedCost: bucket.cost },
+      customPrices,
+    );
+    if (unbilledInput + unbilledOutput + unbilledCacheRead + unbilledCacheWrite <= 0) {
+      return full;
+    }
+    const unbilled = estimateTokenCost(
+      model,
+      {
+        input: unbilledInput,
+        output: unbilledOutput,
+        cacheRead: unbilledCacheRead,
+        cacheWrite: unbilledCacheWrite,
+        reportedCost: 0,
+      },
+      customPrices,
+    );
+    const reportedCostUsd = full.reportedCostUsd;
+    const estimatedCostUsd = unbilled.estimatedCostUsd;
+    const source: CostSource =
+      reportedCostUsd > 0 && estimatedCostUsd > 0
+        ? "mixed"
+        : reportedCostUsd > 0
+          ? "reported"
+          : unbilled.source;
+    return {
+      reportedCostUsd,
+      estimatedCostUsd,
+      costUsd: reportedCostUsd + estimatedCostUsd,
+      cacheSavingsUsd: full.cacheSavingsUsd,
+      unpricedTokens: unbilled.unpricedTokens,
+      source,
+    };
+  }
+  return estimateTokenCost(
+    model,
+    {
+      input: bucket.i,
+      output: bucket.o,
+      cacheRead: bucket.cr,
+      cacheWrite: bucket.cw,
+      reportedCost: bucket.cost,
+    },
+    customPrices,
+  );
+}
+
+function addAggregate(
+  target: Aggregate,
+  bucket: UsageBucket,
+  model: string,
+  priced: BucketPriceResult,
+): void {
   target.requests += bucket.r;
   target.input += bucket.i;
   target.output += bucket.o;
   target.cacheRead += bucket.cr;
   target.cacheWrite += bucket.cw;
   target.reasoning += bucket.rz;
-  target.cost += bucket.cost;
+  target.reportedCost += priced.reportedCostUsd;
+  target.estimatedCost += priced.estimatedCostUsd;
+  target.cost += priced.costUsd;
+  target.cacheSavings += priced.cacheSavingsUsd;
+  target.unpricedTokens += priced.unpricedTokens;
+  if (priced.unpricedTokens > 0) target.unpricedModels.add(model || "unknown");
   target.credits += bucket.credits;
 }
 
+function modelCostSource(aggregate: Aggregate): CostSource {
+  if (aggregate.reportedCost > 0 && aggregate.estimatedCost > 0) return "mixed";
+  if (aggregate.reportedCost > 0) return "reported";
+  if (aggregate.unpricedTokens > 0 && aggregate.estimatedCost <= 0) return "unpriced";
+  return "estimated";
+}
+
 const round2 = (value: number): number => Math.round(value * 100) / 100;
+const round4 = (value: number): number => Math.round(value * 10_000) / 10_000;
 const round0 = (value: number): number => Math.round(value);
 
 function totalsOf(aggregate: Aggregate): UsageTotals {
@@ -74,13 +191,30 @@ function totalsOf(aggregate: Aggregate): UsageTotals {
     cacheRead: round0(aggregate.cacheRead),
     cacheWrite: round0(aggregate.cacheWrite),
     reasoning: round0(aggregate.reasoning),
-    reportedCostUsd: round2(aggregate.cost),
+    reportedCostUsd: round2(aggregate.reportedCost),
+    estimatedCostUsd: round2(aggregate.estimatedCost),
+    costUsd: round2(aggregate.cost),
+    cacheSavingsUsd: round2(aggregate.cacheSavings),
+    unpricedTokens: round0(aggregate.unpricedTokens),
+    unpricedModels: [...aggregate.unpricedModels].sort(),
     credits: round2(aggregate.credits),
   };
 }
 
-function addMonthToDate(target: { costUsd: number; tokens: number; requests: number }, bucket: UsageBucket): void {
-  target.costUsd += bucket.cost;
+interface MonthToDateAcc {
+  costUsd: number;
+  reportedCostUsd: number;
+  estimatedCostUsd: number;
+  cacheSavingsUsd: number;
+  tokens: number;
+  requests: number;
+}
+
+function addMonthToDate(target: MonthToDateAcc, bucket: UsageBucket, priced: ReturnType<typeof priceBucket>): void {
+  target.costUsd += priced.costUsd;
+  target.reportedCostUsd += priced.reportedCostUsd;
+  target.estimatedCostUsd += priced.estimatedCostUsd;
+  target.cacheSavingsUsd += priced.cacheSavingsUsd;
   target.tokens += bucket.i + bucket.o + bucket.cr + bucket.cw;
   target.requests += bucket.r;
 }
@@ -362,6 +496,7 @@ function emptySessionStats(): UsageSessionStats {
     totalCostUsd: 0,
     medianCostUsd: 0,
     p90CostUsd: 0,
+    unpricedCount: 0,
     durationHistogram: histogram([], DURATION_EDGES),
     tokenHistogram: histogram([], TOKEN_EDGES),
     costHistogram: histogram([], COST_EDGES),
@@ -440,7 +575,11 @@ function buildAgentRows(map: Map<string, Aggregate>): UsageAgent[] {
         cacheWrite: round0(aggregate.cacheWrite),
         reasoning: round0(aggregate.reasoning),
         totalTokens: round0(tokenTotal(aggregate)),
-        reportedCostUsd: round2(aggregate.cost),
+        reportedCostUsd: round2(aggregate.reportedCost),
+        estimatedCostUsd: round2(aggregate.estimatedCost),
+        costUsd: round2(aggregate.cost),
+        cacheSavingsUsd: round2(aggregate.cacheSavings),
+        unpricedTokens: round0(aggregate.unpricedTokens),
         credits: round2(aggregate.credits),
       };
     })
@@ -452,6 +591,79 @@ interface CollectedSession {
   item: UsageSessionItem;
 }
 
+function priceSessionEntry(
+  entry: SessionEntry,
+  customPrices?: readonly CustomModelPrice[],
+): { reportedCostUsd: number; estimatedCostUsd: number; costUsd: number; cacheSavingsUsd: number; costSource: CostSource } {
+  const reported = Math.max(0, entry.cost);
+  const totalTokens = entry.i + entry.o + entry.cr + entry.cw;
+  let cacheSavings = 0;
+  let estimated = 0;
+  let unpricedTokens = 0;
+  const modelEntries = entry.models ? Object.entries(entry.models) : [];
+  if (modelEntries.length > 0) {
+    for (const [model, tuple] of modelEntries) {
+      const fullPriced = estimateTokenCost(
+        model,
+        { input: tuple[0], output: tuple[1], cacheRead: tuple[2], cacheWrite: tuple[3], reportedCost: 0 },
+        customPrices,
+      );
+      cacheSavings += fullPriced.cacheSavingsUsd;
+      if (reported <= 0) {
+        estimated += fullPriced.estimatedCostUsd;
+        unpricedTokens += fullPriced.unpricedTokens;
+      } else if (entry.bt !== undefined) {
+        const billed = entry.bt[model] ?? [0, 0, 0, 0];
+        const unbilledInput = Math.max(0, tuple[0] - billed[0]);
+        const unbilledOutput = Math.max(0, tuple[1] - billed[1]);
+        const unbilledCacheRead = Math.max(0, tuple[2] - billed[2]);
+        const unbilledCacheWrite = Math.max(0, tuple[3] - billed[3]);
+        if (unbilledInput + unbilledOutput + unbilledCacheRead + unbilledCacheWrite > 0) {
+          const unbilledPriced = estimateTokenCost(
+            model,
+            {
+              input: unbilledInput,
+              output: unbilledOutput,
+              cacheRead: unbilledCacheRead,
+              cacheWrite: unbilledCacheWrite,
+              reportedCost: 0,
+            },
+            customPrices,
+          );
+          estimated += unbilledPriced.estimatedCostUsd;
+          unpricedTokens += unbilledPriced.unpricedTokens;
+        }
+      }
+    }
+    const costSource: CostSource =
+      reported > 0 && estimated > 0
+        ? "mixed"
+        : reported > 0
+          ? "reported"
+          : unpricedTokens > 0 && estimated <= 0
+            ? "unpriced"
+            : "estimated";
+    return {
+      reportedCostUsd: reported,
+      estimatedCostUsd: estimated,
+      costUsd: reported + estimated,
+      cacheSavingsUsd: cacheSavings,
+      costSource,
+    };
+  }
+  if (reported > 0) {
+    return { reportedCostUsd: reported, estimatedCostUsd: 0, costUsd: reported, cacheSavingsUsd: 0, costSource: "reported" };
+  }
+  // Legacy v13 sessions or older remote projections lack `entry.models`; mark non-empty sessions unpriced.
+  return {
+    reportedCostUsd: 0,
+    estimatedCostUsd: 0,
+    costUsd: 0,
+    cacheSavingsUsd: 0,
+    costSource: totalTokens > 0 ? "unpriced" : "estimated",
+  };
+}
+
 function collectSessions(
   state: ScanState,
   options: {
@@ -460,6 +672,7 @@ function collectSessions(
     origin?: string | null;
     enabled?: ReadonlySet<string>;
     agent?: string | null;
+    customPrices?: readonly CustomModelPrice[];
   },
 ): CollectedSession[] {
   const matched: CollectedSession[] = [];
@@ -476,6 +689,7 @@ function collectSessions(
       if (options.agent && harness !== options.agent) continue;
       if (entry.s < options.startMs || entry.s > options.endMs) continue;
       const durationMs = Math.max(0, entry.e - entry.s);
+      const priced = priceSessionEntry(entry, options.customPrices);
       matched.push({
         agent: harness,
         item: {
@@ -492,7 +706,11 @@ function collectSessions(
           cacheRead: round0(entry.cr),
           cacheWrite: round0(entry.cw),
           totalTokens: round0(entry.i + entry.o + entry.cr + entry.cw),
-          reportedCostUsd: round2(entry.cost),
+          reportedCostUsd: round2(priced.reportedCostUsd),
+          estimatedCostUsd: round2(priced.estimatedCostUsd),
+          costUsd: round2(priced.costUsd),
+          cacheSavingsUsd: round2(priced.cacheSavingsUsd),
+          costSource: priced.costSource,
           credits: round2(entry.credits),
         },
       });
@@ -505,7 +723,8 @@ function sessionStatsOf(sessions: readonly CollectedSession[]): UsageSessionStat
   if (sessions.length === 0) return emptySessionStats();
   const durations = sessions.map((session) => session.item.durationMs).filter((value) => value > 0);
   const tokens = sessions.map((session) => session.item.totalTokens).filter((value) => value > 0);
-  const costs = sessions.map((session) => session.item.reportedCostUsd).filter((value) => value > 0);
+  const costs = sessions.map((session) => session.item.costUsd).filter((value) => value > 0);
+  const unpricedCount = sessions.filter((session) => session.item.costSource === "unpriced").length;
   const startHours = Array.from({ length: 24 }, () => 0);
   for (const session of sessions) startHours[new Date(session.item.start).getHours()]! += 1;
   const sortedByStart = [...sessions].sort((a, b) => a.item.start - b.item.start);
@@ -538,6 +757,7 @@ function sessionStatsOf(sessions: readonly CollectedSession[]): UsageSessionStat
     totalCostUsd: round2(costs.reduce((sum, value) => sum + value, 0)),
     medianCostUsd: round2(percentile(costs, 0.5)),
     p90CostUsd: round2(percentile(costs, 0.9)),
+    unpricedCount,
     durationHistogram: histogram(durations, DURATION_EDGES),
     tokenHistogram: histogram(tokens, TOKEN_EDGES),
     costHistogram: histogram(costs, COST_EDGES),
@@ -679,6 +899,7 @@ export function buildReport(
   enabledHarnesses?: ReadonlySet<string>,
   custom?: { from?: string; to?: string } | null,
   granularity: UsageGranularity = "day",
+  customModelPrices?: readonly CustomModelPrice[],
 ): UsageReport {
   const now = new Date();
   const plan = buildPlan(range, granularity, now, custom);
@@ -687,7 +908,24 @@ export function buildReport(
   const previousEndKey = hourKeyOf(previous.end);
   const allowed = new Set(plan.periodKeys);
   const originFilter = origin ?? null;
-  const series = new Map<string, { tokens: number; requests: number; input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number; credits: number; cost: number; byAgent: Record<string, number>; byAgentRequests: Record<string, number>; byAgentCostUsd: Record<string, number> }>();
+  const series = new Map<
+    string,
+    {
+      tokens: number;
+      requests: number;
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      reasoning: number;
+      credits: number;
+      cost: number;
+      cacheSavings: number;
+      byAgent: Record<string, number>;
+      byAgentRequests: Record<string, number>;
+      byAgentCostUsd: Record<string, number>;
+    }
+  >();
   const agents = new Map<string, Aggregate>();
   const models = new Map<string, Aggregate & { agent: string; model: string }>();
   const projects = new Map<string, Aggregate & { project: string }>();
@@ -695,7 +933,7 @@ export function buildReport(
   const previousAgents = new Map<string, Aggregate>();
   const totals = zero();
   const previousTotals = zero();
-  const monthToDate = { costUsd: 0, tokens: 0, requests: 0 };
+  const monthToDate: MonthToDateAcc = { costUsd: 0, reportedCostUsd: 0, estimatedCostUsd: 0, cacheSavingsUsd: 0, tokens: 0, requests: 0 };
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const calendar = buildCalendar(state, now, { origin: originFilter, enabled: enabledHarnesses });
   const hourOfWeek = emptyTimeMatrix(7 * 24);
@@ -709,47 +947,50 @@ export function buildReport(
       if (!firstDay || date < firstDay) firstDay = date;
       const inCurrent = bucketKey >= plan.startKey && bucketKey <= plan.endKey;
       const inPrevious = bucketKey >= previousStartKey && bucketKey <= previousEndKey;
+      const inMonth = bucketKey.slice(0, 7) === monthKey;
+      if (!inCurrent && !inPrevious && !inMonth) continue;
+      const priced = priceBucket(model, bucket, customModelPrices);
       if (inCurrent) {
         let originAggregate = origins.get(source.id);
         if (!originAggregate) {
           originAggregate = zero();
           origins.set(source.id, originAggregate);
         }
-        addAggregate(originAggregate, bucket);
+        addAggregate(originAggregate, bucket, model, priced);
       }
       if (originFilter !== null && source.id !== originFilter) continue;
-      if (bucketKey.slice(0, 7) === monthKey) addMonthToDate(monthToDate, bucket);
+      if (inMonth) addMonthToDate(monthToDate, bucket, priced);
       if (!inCurrent && !inPrevious) continue;
       if (inPrevious) {
-        addAggregate(previousTotals, bucket);
+        addAggregate(previousTotals, bucket, model, priced);
         let previousAgent = previousAgents.get(harness);
         if (!previousAgent) {
           previousAgent = zero();
           previousAgents.set(harness, previousAgent);
         }
-        addAggregate(previousAgent, bucket);
+        addAggregate(previousAgent, bucket, model, priced);
       }
       if (!inCurrent) continue;
-      addAggregate(totals, bucket);
+      addAggregate(totals, bucket, model, priced);
       let agent = agents.get(harness);
       if (!agent) {
         agent = zero();
         agents.set(harness, agent);
       }
-      addAggregate(agent, bucket);
+      addAggregate(agent, bucket, model, priced);
       const modelKey = `${harness}\u0001${model}`;
       let modelAggregate = models.get(modelKey);
       if (!modelAggregate) {
         modelAggregate = Object.assign(zero(), { agent: harness, model });
         models.set(modelKey, modelAggregate);
       }
-      addAggregate(modelAggregate, bucket);
+      addAggregate(modelAggregate, bucket, model, priced);
       let projectAggregate = projects.get(project);
       if (!projectAggregate) {
         projectAggregate = Object.assign(zero(), { project });
         projects.set(project, projectAggregate);
       }
-      addAggregate(projectAggregate, bucket);
+      addAggregate(projectAggregate, bucket, model, priced);
       const calendarDate = dateOfKey(bucketKey);
       if (calendarDate) {
         const weekday = (calendarDate.getDay() + 6) % 7;
@@ -764,7 +1005,21 @@ export function buildReport(
       if (allowed.has(periodKey)) {
         let point = series.get(periodKey);
         if (!point) {
-          point = { tokens: 0, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, credits: 0, cost: 0, byAgent: {}, byAgentRequests: {}, byAgentCostUsd: {} };
+          point = {
+            tokens: 0,
+            requests: 0,
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            reasoning: 0,
+            credits: 0,
+            cost: 0,
+            cacheSavings: 0,
+            byAgent: {},
+            byAgentRequests: {},
+            byAgentCostUsd: {},
+          };
           series.set(periodKey, point);
         }
         const tokens = bucket.i + bucket.o + bucket.cr + bucket.cw;
@@ -776,25 +1031,28 @@ export function buildReport(
         point.cacheWrite += bucket.cw;
         point.reasoning += bucket.rz;
         point.credits += bucket.credits;
-        point.cost += bucket.cost;
+        point.cost += priced.costUsd;
+        point.cacheSavings += priced.cacheSavingsUsd;
         point.byAgent[harness] = (point.byAgent[harness] ?? 0) + tokens;
         point.byAgentRequests[harness] = (point.byAgentRequests[harness] ?? 0) + bucket.r;
-        point.byAgentCostUsd[harness] = (point.byAgentCostUsd[harness] ?? 0) + bucket.cost;
+        point.byAgentCostUsd[harness] = (point.byAgentCostUsd[harness] ?? 0) + priced.costUsd;
       }
     }
   }
 
+  const win = rangeWindow(range, now, custom);
   const selectedSessions = collectSessions(state, {
-    startMs: rangeWindow(range, now, custom).start.getTime(),
-    endMs: rangeWindow(range, now, custom).end.getTime(),
+    startMs: win.start.getTime(),
+    endMs: win.end.getTime(),
     origin: originFilter,
     enabled: enabledHarnesses,
+    customPrices: customModelPrices,
   });
   const sessionStats = sessionStatsOf(selectedSessions);
   const requestStats = requestStatsOf(
     collectCallSamples(state, {
-      startMs: rangeWindow(range, now, custom).start.getTime(),
-      endMs: rangeWindow(range, now, custom).end.getTime(),
+      startMs: win.start.getTime(),
+      endMs: win.end.getTime(),
       origin: originFilter,
       enabled: enabledHarnesses,
     }),
@@ -842,6 +1100,7 @@ export function buildReport(
         reasoning: round0(point?.reasoning ?? 0),
         credits: round2(point?.credits ?? 0),
         costUsd: round2(point?.cost ?? 0),
+        cacheSavingsUsd: round2(point?.cacheSavings ?? 0),
         byAgent,
         byAgentRequests,
         byAgentCostUsd,
@@ -861,7 +1120,11 @@ export function buildReport(
         cacheWrite: round0(aggregate.cacheWrite),
         reasoning: round0(aggregate.reasoning),
         credits: round2(aggregate.credits),
-        reportedCostUsd: round2(aggregate.cost),
+        reportedCostUsd: round2(aggregate.reportedCost),
+        estimatedCostUsd: round2(aggregate.estimatedCost),
+        costUsd: round2(aggregate.cost),
+        cacheSavingsUsd: round2(aggregate.cacheSavings),
+        costSource: modelCostSource(aggregate),
       })),
     projects: [...projects.values()]
       .sort((a, b) => tokenTotal(b) + b.credits - (tokenTotal(a) + a.credits))
@@ -888,6 +1151,9 @@ export function buildReport(
     calendar,
     monthToDate: {
       costUsd: round2(monthToDate.costUsd),
+      reportedCostUsd: round2(monthToDate.reportedCostUsd),
+      estimatedCostUsd: round2(monthToDate.estimatedCostUsd),
+      cacheSavingsUsd: round2(monthToDate.cacheSavingsUsd),
       tokens: round0(monthToDate.tokens),
       requests: round0(monthToDate.requests),
     },
@@ -906,6 +1172,7 @@ export function buildAgentReport(
   enabledHarnesses?: ReadonlySet<string>,
   custom?: { from?: string; to?: string } | null,
   granularity: UsageGranularity = "day",
+  customModelPrices?: readonly CustomModelPrice[],
 ): UsageAgentReport {
   const now = new Date();
   const win = rangeWindow(range, now, custom);
@@ -917,10 +1184,24 @@ export function buildAgentReport(
   const originFilter = origin ?? null;
   const totals = zero();
   const previousTotals = zero();
-  const monthToDate = { costUsd: 0, tokens: 0, requests: 0 };
+  const monthToDate: MonthToDateAcc = { costUsd: 0, reportedCostUsd: 0, estimatedCostUsd: 0, cacheSavingsUsd: 0, tokens: 0, requests: 0 };
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   let firstDay: string | null = null;
-  const series = new Map<string, { tokens: number; requests: number; input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number; credits: number; cost: number }>();
+  const series = new Map<
+    string,
+    {
+      tokens: number;
+      requests: number;
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      reasoning: number;
+      credits: number;
+      cost: number;
+      cacheSavings: number;
+    }
+  >();
   const models = new Map<string, Aggregate & { model: string }>();
   const projects = new Map<string, Aggregate & { project: string }>();
   const hourOfWeek = emptyTimeMatrix(7 * 24);
@@ -933,25 +1214,28 @@ export function buildAgentReport(
       if (harness !== agent) continue;
       const dateKey = bucketKey.slice(0, 10);
       if (!firstDay || dateKey < firstDay) firstDay = dateKey;
-      if (bucketKey.slice(0, 7) === monthKey) addMonthToDate(monthToDate, bucket);
       const inCurrent = bucketKey >= plan.startKey && bucketKey <= plan.endKey;
       const inPrevious = bucketKey >= previousStartKey && bucketKey <= previousEndKey;
+      const inMonth = bucketKey.slice(0, 7) === monthKey;
+      if (!inCurrent && !inPrevious && !inMonth) continue;
+      const priced = priceBucket(model, bucket, customModelPrices);
+      if (inMonth) addMonthToDate(monthToDate, bucket, priced);
       if (!inCurrent && !inPrevious) continue;
-      if (inPrevious) addAggregate(previousTotals, bucket);
+      if (inPrevious) addAggregate(previousTotals, bucket, model, priced);
       if (!inCurrent) continue;
-      addAggregate(totals, bucket);
+      addAggregate(totals, bucket, model, priced);
       let modelAggregate = models.get(model);
       if (!modelAggregate) {
         modelAggregate = Object.assign(zero(), { model });
         models.set(model, modelAggregate);
       }
-      addAggregate(modelAggregate, bucket);
+      addAggregate(modelAggregate, bucket, model, priced);
       let projectAggregate = projects.get(project);
       if (!projectAggregate) {
         projectAggregate = Object.assign(zero(), { project });
         projects.set(project, projectAggregate);
       }
-      addAggregate(projectAggregate, bucket);
+      addAggregate(projectAggregate, bucket, model, priced);
       const date = dateOfKey(bucketKey);
       if (date) {
         const weekday = (date.getDay() + 6) % 7;
@@ -966,7 +1250,7 @@ export function buildAgentReport(
       if (allowed.has(periodKey)) {
         let point = series.get(periodKey);
         if (!point) {
-          point = { tokens: 0, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, credits: 0, cost: 0 };
+          point = { tokens: 0, requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, credits: 0, cost: 0, cacheSavings: 0 };
           series.set(periodKey, point);
         }
         point.tokens += bucket.i + bucket.o + bucket.cr + bucket.cw;
@@ -977,7 +1261,8 @@ export function buildAgentReport(
         point.cacheWrite += bucket.cw;
         point.reasoning += bucket.rz;
         point.credits += bucket.credits;
-        point.cost += bucket.cost;
+        point.cost += priced.costUsd;
+        point.cacheSavings += priced.cacheSavingsUsd;
       }
     }
   }
@@ -987,9 +1272,21 @@ export function buildAgentReport(
     for (const record of records?.[agent] ?? []) {
       const hourKey = localHourKey(record.t);
       if (hourKey < plan.startKey || hourKey > plan.endKey) continue;
+      const model = record.m || "unknown";
+      const priced = estimateTokenCost(
+        model,
+        {
+          input: record.i,
+          output: record.o,
+          cacheRead: record.cr,
+          cacheWrite: record.cw,
+          reportedCost: record.cost,
+        },
+        customModelPrices,
+      );
       requests.push({
         ts: record.t,
-        model: record.m || "unknown",
+        model,
         project: record.p,
         session: record.s,
         input: round0(record.i),
@@ -998,7 +1295,8 @@ export function buildAgentReport(
         cacheWrite: round0(record.cw),
         reasoning: round0(record.rz),
         credits: round2(record.credits),
-        costUsd: round2(record.cost),
+        costUsd: round4(priced.costUsd),
+        costSource: priced.source,
         origin: originName,
       });
     }
@@ -1010,7 +1308,14 @@ export function buildAgentReport(
   requests.sort((a, b) => b.ts - a.ts);
 
   const matchedSessions = agentEnabled
-    ? collectSessions(state, { startMs: win.start.getTime(), endMs: win.end.getTime(), origin: originFilter, enabled: enabledHarnesses, agent })
+    ? collectSessions(state, {
+        startMs: win.start.getTime(),
+        endMs: win.end.getTime(),
+        origin: originFilter,
+        enabled: enabledHarnesses,
+        agent,
+        customPrices: customModelPrices,
+      })
     : [];
   const sessionStats = sessionStatsOf(matchedSessions);
   const requestStats = requestStatsOf(
@@ -1045,6 +1350,7 @@ export function buildAgentReport(
         reasoning: round0(point?.reasoning ?? 0),
         credits: round2(point?.credits ?? 0),
         costUsd: cost,
+        cacheSavingsUsd: round2(point?.cacheSavings ?? 0),
         byAgent: tokens > 0 ? { [agent]: tokens } : {},
         byAgentRequests: requestsInPeriod > 0 ? { [agent]: requestsInPeriod } : {},
         byAgentCostUsd: cost > 0 ? { [agent]: cost } : {},
@@ -1064,7 +1370,11 @@ export function buildAgentReport(
         cacheWrite: round0(aggregate.cacheWrite),
         reasoning: round0(aggregate.reasoning),
         credits: round2(aggregate.credits),
-        reportedCostUsd: round2(aggregate.cost),
+        reportedCostUsd: round2(aggregate.reportedCost),
+        estimatedCostUsd: round2(aggregate.estimatedCost),
+        costUsd: round2(aggregate.cost),
+        cacheSavingsUsd: round2(aggregate.cacheSavings),
+        costSource: modelCostSource(aggregate),
       })),
     projects: [...projects.values()]
       .sort((a, b) => tokenTotal(b) + b.credits - (tokenTotal(a) + a.credits))
@@ -1083,6 +1393,9 @@ export function buildAgentReport(
     calendar,
     monthToDate: {
       costUsd: round2(monthToDate.costUsd),
+      reportedCostUsd: round2(monthToDate.reportedCostUsd),
+      estimatedCostUsd: round2(monthToDate.estimatedCostUsd),
+      cacheSavingsUsd: round2(monthToDate.cacheSavingsUsd),
       tokens: round0(monthToDate.tokens),
       requests: round0(monthToDate.requests),
     },

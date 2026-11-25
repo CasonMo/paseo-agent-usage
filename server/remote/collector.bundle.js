@@ -12,192 +12,12 @@ var import_node_os = require("os");
 var import_node_path3 = require("path");
 
 // server/scan/state.ts
-var import_promises = require("fs/promises");
-var import_node_path = require("path");
-var STATE_VERSION = 13;
-var SESSION_KEEP_LIMIT = 8e3;
-function pruneSessions(sessions) {
-  for (const key of Object.keys(sessions)) {
-    const entry = sessions[key];
-    if (!entry || entry.r <= 0) delete sessions[key];
-  }
-  const keys = Object.keys(sessions);
-  if (keys.length <= SESSION_KEEP_LIMIT) return;
-  keys.sort((a, b) => {
-    var _a, _b;
-    return (((_a = sessions[b]) == null ? void 0 : _a.e) ?? 0) - (((_b = sessions[a]) == null ? void 0 : _b.e) ?? 0);
-  });
-  for (const key of keys.slice(SESSION_KEEP_LIMIT)) delete sessions[key];
-}
-function applySession(sessions, harness, sid, delta) {
-  if (!sid) return;
-  const key = `${harness}${sid}`;
-  let entry = sessions[key];
-  if (!entry) {
-    if (delta.r <= 0) return;
-    entry = { s: delta.t ?? 0, e: delta.t ?? 0, r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0, p: delta.p ?? "" };
-    sessions[key] = entry;
-  }
-  entry.r += delta.r;
-  entry.i += delta.i ?? 0;
-  entry.o += delta.o ?? 0;
-  entry.cr += delta.cr ?? 0;
-  entry.cw += delta.cw ?? 0;
-  entry.rz += delta.rz ?? 0;
-  entry.cost += delta.cost ?? 0;
-  entry.credits += delta.credits ?? 0;
-  if (delta.p) entry.p = delta.p;
-  if (delta.title && !entry.title) entry.title = delta.title;
-  if (typeof delta.t === "number" && Number.isFinite(delta.t)) {
-    if (delta.t < entry.s) entry.s = delta.t;
-    if (delta.t > entry.e) entry.e = delta.t;
-  }
-}
-var MAX_RECENT_PER_AGENT = 400;
-function emptyState() {
-  return {
-    version: STATE_VERSION,
-    buckets: {},
-    sessions: {},
-    files: {},
-    recent: {},
-    opencode: { watermark: 0, lastId: "" },
-    pi: { seen: [] },
-    hosts: {},
-    meta: { lastScanAt: null, scanError: null }
-  };
-}
-function bucketKey(hourKey, harness, model, project) {
-  return [hourKey, harness, model, project].join("");
-}
-function addBucket(buckets, hourKey, harness, model, project, delta) {
-  const key = bucketKey(hourKey, harness, model, project);
-  let bucket = buckets[key];
-  if (!bucket) {
-    bucket = { r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0 };
-    buckets[key] = bucket;
-  }
-  bucket.r += delta.r;
-  bucket.i += delta.i ?? 0;
-  bucket.o += delta.o ?? 0;
-  bucket.cr += delta.cr ?? 0;
-  bucket.cw += delta.cw ?? 0;
-  bucket.rz += delta.rz ?? 0;
-  bucket.cost += delta.cost ?? 0;
-  bucket.credits += delta.credits ?? 0;
-  if (bucket.r <= 0 && bucket.i <= 0 && bucket.o <= 0 && bucket.cr <= 0 && bucket.cw <= 0 && bucket.rz <= 0 && bucket.cost <= 0 && bucket.credits <= 0) {
-    delete buckets[key];
-  }
-}
-function recordCall(state, harness, record, replaceId) {
-  var _a;
-  let list = state.recent[harness];
-  if (!list) {
-    list = [];
-    state.recent[harness] = list;
-  }
-  if (replaceId) {
-    const floor = Math.max(0, list.length - 32);
-    for (let index = list.length - 1; index >= floor; index -= 1) {
-      if (((_a = list[index]) == null ? void 0 : _a.id) === replaceId) {
-        list[index] = record;
-        return;
-      }
-    }
-  }
-  list.push(record);
-  if (list.length > MAX_RECENT_PER_AGENT) list.splice(0, list.length - MAX_RECENT_PER_AGENT);
-}
-function finite(value) {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-function sanitizeBuckets(raw) {
-  const buckets = {};
-  if (!raw || typeof raw !== "object") return buckets;
-  for (const [key, value] of Object.entries(raw)) {
-    if (!value || typeof value !== "object") continue;
-    const record = value;
-    buckets[key] = {
-      r: finite(record.r),
-      i: finite(record.i),
-      o: finite(record.o),
-      cr: finite(record.cr),
-      cw: finite(record.cw),
-      rz: finite(record.rz),
-      cost: finite(record.cost),
-      credits: finite(record.credits)
-    };
-  }
-  return buckets;
-}
-function sanitizeSessions(raw) {
-  const sessions = {};
-  if (!raw || typeof raw !== "object") return sessions;
-  for (const [key, value] of Object.entries(raw)) {
-    if (!value || typeof value !== "object") continue;
-    const record = value;
-    sessions[key] = {
-      s: finite(record.s),
-      e: finite(record.e),
-      r: finite(record.r),
-      i: finite(record.i),
-      o: finite(record.o),
-      cr: finite(record.cr),
-      cw: finite(record.cw),
-      rz: finite(record.rz),
-      cost: finite(record.cost),
-      credits: finite(record.credits),
-      p: typeof record.p === "string" ? record.p : "",
-      title: typeof record.title === "string" ? record.title : void 0
-    };
-  }
-  return sessions;
-}
-async function loadState(dir) {
-  var _a, _b, _c, _d, _e, _f, _g, _h;
-  try {
-    const text = await (0, import_promises.readFile)((0, import_node_path.join)(dir, "state.json"), "utf8");
-    const parsed = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object" || parsed.version !== STATE_VERSION) return emptyState();
-    const state = emptyState();
-    state.buckets = sanitizeBuckets(parsed.buckets);
-    state.sessions = sanitizeSessions(parsed.sessions);
-    state.files = parsed.files ?? {};
-    state.recent = parsed.recent ?? {};
-    state.opencode = {
-      watermark: finite((_a = parsed.opencode) == null ? void 0 : _a.watermark),
-      lastId: typeof ((_b = parsed.opencode) == null ? void 0 : _b.lastId) === "string" ? parsed.opencode.lastId : "",
-      legacyWatermark: typeof ((_c = parsed.opencode) == null ? void 0 : _c.legacyWatermark) === "number" ? parsed.opencode.legacyWatermark : void 0,
-      legacyLastId: typeof ((_d = parsed.opencode) == null ? void 0 : _d.legacyLastId) === "string" ? parsed.opencode.legacyLastId : void 0,
-      seen: Array.isArray((_e = parsed.opencode) == null ? void 0 : _e.seen) ? parsed.opencode.seen.filter((id) => typeof id === "string") : void 0
-    };
-    state.pi = { seen: Array.isArray((_f = parsed.pi) == null ? void 0 : _f.seen) ? parsed.pi.seen.filter((k) => typeof k === "string") : [] };
-    state.hosts = parsed.hosts ?? {};
-    state.meta = {
-      lastScanAt: typeof ((_g = parsed.meta) == null ? void 0 : _g.lastScanAt) === "number" ? parsed.meta.lastScanAt : null,
-      scanError: typeof ((_h = parsed.meta) == null ? void 0 : _h.scanError) === "string" ? parsed.meta.scanError : null
-    };
-    return state;
-  } catch {
-    return emptyState();
-  }
-}
-async function saveState(dir, state) {
-  pruneSessions(state.sessions);
-  for (const host of Object.values(state.hosts ?? {})) if (host == null ? void 0 : host.sessions) pruneSessions(host.sessions);
-  await (0, import_promises.mkdir)(dir, { recursive: true, mode: 448 }).catch(() => {
-  });
-  const file = (0, import_node_path.join)(dir, "state.json");
-  const temporary = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
-  await (0, import_promises.writeFile)(temporary, JSON.stringify(state), { mode: 384 });
-  await (0, import_promises.rename)(temporary, file);
-  await (0, import_promises.chmod)(dir, 448).catch(() => {
-  });
-}
-
-// server/scan/util.ts
 var import_promises2 = require("fs/promises");
 var import_node_path2 = require("path");
+
+// server/scan/util.ts
+var import_promises = require("fs/promises");
+var import_node_path = require("path");
 function num(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
@@ -237,13 +57,13 @@ async function listJsonlFiles(root) {
     const dir = queue.pop();
     let entries;
     try {
-      entries = await (0, import_promises2.readdir)(dir, { withFileTypes: true });
+      entries = await (0, import_promises.readdir)(dir, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const entry of entries) {
-      if (entry.isDirectory()) queue.push((0, import_node_path2.join)(dir, entry.name));
-      else if (entry.name.endsWith(".jsonl")) files.push((0, import_node_path2.join)(dir, entry.name));
+      if (entry.isDirectory()) queue.push((0, import_node_path.join)(dir, entry.name));
+      else if (entry.name.endsWith(".jsonl")) files.push((0, import_node_path.join)(dir, entry.name));
     }
   }
   return files;
@@ -252,7 +72,7 @@ var CHUNK = 4 * 1024 * 1024;
 async function forEachNewLine(path, fromOffset, onLine) {
   let handle;
   try {
-    handle = await (0, import_promises2.open)(path, "r");
+    handle = await (0, import_promises.open)(path, "r");
   } catch {
     return null;
   }
@@ -281,6 +101,527 @@ async function forEachNewLine(path, fromOffset, onLine) {
   }
 }
 
+// server/scan/state.ts
+var STATE_VERSION = 13;
+var DEFAULT_ARCHIVE_RETENTION_DAYS = 0;
+var SESSION_KEEP_LIMIT = 8e3;
+function pruneSessions(sessions) {
+  for (const key of Object.keys(sessions)) {
+    const entry = sessions[key];
+    if (!entry || entry.r <= 0) delete sessions[key];
+  }
+  const keys = Object.keys(sessions);
+  if (keys.length <= SESSION_KEEP_LIMIT) return;
+  keys.sort((a, b) => {
+    var _a, _b;
+    return (((_a = sessions[b]) == null ? void 0 : _a.e) ?? 0) - (((_b = sessions[a]) == null ? void 0 : _b.e) ?? 0);
+  });
+  for (const key of keys.slice(SESSION_KEEP_LIMIT)) delete sessions[key];
+}
+function applyModelTuple(map, model, i, o, cr, cw) {
+  if (!model || i === 0 && o === 0 && cr === 0 && cw === 0) return map;
+  const nextMap = map ?? {};
+  const prev = nextMap[model] ?? [0, 0, 0, 0];
+  const next = [prev[0] + i, prev[1] + o, prev[2] + cr, prev[3] + cw];
+  if (next[0] <= 0 && next[1] <= 0 && next[2] <= 0 && next[3] <= 0) {
+    delete nextMap[model];
+    return Object.keys(nextMap).length > 0 ? nextMap : void 0;
+  }
+  nextMap[model] = next;
+  return nextMap;
+}
+function seedLegacySessionBilled(entry) {
+  if (entry.cost <= 0 || entry.bt !== void 0 || !entry.models) return;
+  const bt = {};
+  for (const [model, tuple] of Object.entries(entry.models)) {
+    bt[model] = [tuple[0], tuple[1], tuple[2], tuple[3]];
+  }
+  if (Object.keys(bt).length > 0) entry.bt = bt;
+}
+function applySession(sessions, harness, sid, delta) {
+  if (!sid) return;
+  const key = `${harness}${sid}`;
+  let entry = sessions[key];
+  const isNew = !entry;
+  if (!entry) {
+    if (delta.r <= 0) return;
+    entry = { s: delta.t ?? 0, e: delta.t ?? 0, r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0, p: delta.p ?? "" };
+    sessions[key] = entry;
+  } else if (delta.r > 0 && entry.cost > 0 && entry.bt === void 0) {
+    seedLegacySessionBilled(entry);
+  }
+  const di = delta.i ?? 0;
+  const do_ = delta.o ?? 0;
+  const dcr = delta.cr ?? 0;
+  const dcw = delta.cw ?? 0;
+  const dcost = delta.cost ?? 0;
+  entry.r += delta.r;
+  entry.i += di;
+  entry.o += do_;
+  entry.cr += dcr;
+  entry.cw += dcw;
+  entry.rz += delta.rz ?? 0;
+  entry.cost += dcost;
+  entry.credits += delta.credits ?? 0;
+  entry.models = applyModelTuple(entry.models, delta.model, di, do_, dcr, dcw);
+  if (!isNew && entry.bt !== void 0) {
+    if (dcost > 0) entry.bt = applyModelTuple(entry.bt, delta.model, di, do_, dcr, dcw);
+  } else if (dcost > 0) {
+    entry.bt = applyModelTuple(entry.bt, delta.model, di, do_, dcr, dcw);
+  }
+  if (entry.cost <= 0 && entry.bt) delete entry.bt;
+  if (delta.p) entry.p = delta.p;
+  if (delta.title && !entry.title) entry.title = delta.title;
+  if (typeof delta.t === "number" && Number.isFinite(delta.t)) {
+    if (entry.s === 0 || delta.t < entry.s) entry.s = delta.t;
+    if (delta.t > entry.e) entry.e = delta.t;
+  }
+}
+var MAX_RECENT_PER_AGENT = 400;
+function emptyState() {
+  return {
+    version: STATE_VERSION,
+    buckets: {},
+    sessions: {},
+    files: {},
+    recent: {},
+    opencode: { watermark: 0, lastId: "" },
+    pi: { seen: [] },
+    hosts: {},
+    meta: { lastScanAt: null, scanError: null }
+  };
+}
+function bucketKey(hourKey, harness, model, project) {
+  return [hourKey, harness, model, project].join("");
+}
+function addTokenTuple(target, delta) {
+  const next = [
+    ((target == null ? void 0 : target[0]) ?? 0) + delta[0],
+    ((target == null ? void 0 : target[1]) ?? 0) + delta[1],
+    ((target == null ? void 0 : target[2]) ?? 0) + delta[2],
+    ((target == null ? void 0 : target[3]) ?? 0) + delta[3]
+  ];
+  if (next[0] <= 0 && next[1] <= 0 && next[2] <= 0 && next[3] <= 0) return void 0;
+  return next;
+}
+function addBucketByKey(buckets, key, delta) {
+  let bucket = buckets[key];
+  const isNew = !bucket;
+  if (!bucket) {
+    bucket = { r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0 };
+    buckets[key] = bucket;
+  } else if (bucket.bt === void 0 && bucket.cost > 0 && ((delta.cost ?? 0) > 0 || delta.bt !== void 0 || delta.r > 0)) {
+    bucket.bt = [bucket.i, bucket.o, bucket.cr, bucket.cw];
+  }
+  const di = delta.i ?? 0;
+  const do_ = delta.o ?? 0;
+  const dcr = delta.cr ?? 0;
+  const dcw = delta.cw ?? 0;
+  const dcost = delta.cost ?? 0;
+  bucket.r += delta.r;
+  bucket.i += di;
+  bucket.o += do_;
+  bucket.cr += dcr;
+  bucket.cw += dcw;
+  bucket.rz += delta.rz ?? 0;
+  bucket.cost += dcost;
+  bucket.credits += delta.credits ?? 0;
+  if (delta.bt !== void 0) {
+    const nextBt = addTokenTuple(bucket.bt, delta.bt);
+    if (nextBt) bucket.bt = nextBt;
+    else delete bucket.bt;
+  } else if (dcost > 0) {
+    const nextBt = addTokenTuple(bucket.bt, [di, do_, dcr, dcw]);
+    if (nextBt) bucket.bt = nextBt;
+    else delete bucket.bt;
+  } else if (isNew && bucket.bt) {
+    delete bucket.bt;
+  }
+  if (bucket.cost <= 0 && bucket.bt) delete bucket.bt;
+  if (bucket.r <= 0 && bucket.i <= 0 && bucket.o <= 0 && bucket.cr <= 0 && bucket.cw <= 0 && bucket.rz <= 0 && bucket.cost <= 0 && bucket.credits <= 0) {
+    delete buckets[key];
+  }
+}
+function addBucket(buckets, hourKey, harness, model, project, delta) {
+  addBucketByKey(buckets, bucketKey(hourKey, harness, model, project), delta);
+}
+function recordFileBucket(state, fileBuckets, hourKey, harness, model, project, delta) {
+  addBucket(state.buckets, hourKey, harness, model, project, delta);
+  addBucket(fileBuckets, hourKey, harness, model, project, delta);
+}
+function recordFileSession(state, fileSessions, harness, sid, delta) {
+  applySession(state.sessions, harness, sid, delta);
+  applySession(fileSessions, harness, sid, delta);
+}
+function mergeSessionEntry(sessions, key, entry, sign = 1) {
+  let target = sessions[key];
+  if (!target) {
+    if (sign < 0 || entry.r <= 0) return;
+    target = { s: entry.s, e: entry.e, r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0, p: entry.p };
+    sessions[key] = target;
+  } else if (sign > 0 && target.cost > 0 && target.bt === void 0 && entry.bt !== void 0) {
+    seedLegacySessionBilled(target);
+  }
+  target.r += sign * entry.r;
+  target.i += sign * entry.i;
+  target.o += sign * entry.o;
+  target.cr += sign * entry.cr;
+  target.cw += sign * entry.cw;
+  target.rz += sign * entry.rz;
+  target.cost += sign * entry.cost;
+  target.credits += sign * entry.credits;
+  if (entry.models) {
+    for (const [model, tuple] of Object.entries(entry.models)) {
+      target.models = applyModelTuple(target.models, model, sign * tuple[0], sign * tuple[1], sign * tuple[2], sign * tuple[3]);
+    }
+  }
+  if (entry.bt) {
+    for (const [model, tuple] of Object.entries(entry.bt)) {
+      target.bt = applyModelTuple(target.bt, model, sign * tuple[0], sign * tuple[1], sign * tuple[2], sign * tuple[3]);
+    }
+  } else if (sign > 0 && entry.cost > 0 && entry.models && target.bt !== void 0) {
+    for (const [model, tuple] of Object.entries(entry.models)) {
+      target.bt = applyModelTuple(target.bt, model, tuple[0], tuple[1], tuple[2], tuple[3]);
+    }
+  }
+  if (target.cost <= 0 && target.bt) delete target.bt;
+  if (sign > 0) {
+    if (entry.p && !target.p) target.p = entry.p;
+    if (entry.title && !target.title) target.title = entry.title;
+    if (entry.s > 0 && (target.s === 0 || entry.s < target.s)) target.s = entry.s;
+    if (entry.e > target.e) target.e = entry.e;
+  }
+  if (target.r <= 0 && target.i <= 0 && target.o <= 0 && target.cr <= 0 && target.cw <= 0) {
+    delete sessions[key];
+  }
+}
+function mergeBuckets(target, source, sign = 1) {
+  if (!source) return;
+  for (const [key, bucket] of Object.entries(source)) {
+    const existing = target[key];
+    const bt = bucket.bt ? [sign * bucket.bt[0], sign * bucket.bt[1], sign * bucket.bt[2], sign * bucket.bt[3]] : sign > 0 && bucket.cost > 0 && (existing == null ? void 0 : existing.bt) !== void 0 ? [bucket.i, bucket.o, bucket.cr, bucket.cw] : void 0;
+    addBucketByKey(target, key, {
+      r: sign * bucket.r,
+      i: sign * bucket.i,
+      o: sign * bucket.o,
+      cr: sign * bucket.cr,
+      cw: sign * bucket.cw,
+      rz: sign * bucket.rz,
+      cost: sign * bucket.cost,
+      credits: sign * bucket.credits,
+      ...bt !== void 0 ? { bt } : {}
+    });
+  }
+}
+function dropRecentForFile(state, filePath) {
+  if (!filePath) return;
+  for (const [harness, list] of Object.entries(state.recent)) {
+    if (!Array.isArray(list) || list.length === 0) continue;
+    const filtered = list.filter((record) => record.f !== filePath);
+    if (filtered.length !== list.length) state.recent[harness] = filtered;
+  }
+}
+function archiveFileContribution(state, fileState, filePath) {
+  var _a;
+  const hasBuckets = Boolean(fileState.buckets && Object.keys(fileState.buckets).length > 0);
+  const hasSessions = Boolean(fileState.sessions && Object.keys(fileState.sessions).length > 0);
+  if (!hasBuckets && !hasSessions) return;
+  state.archive ?? (state.archive = { buckets: {}, sessions: {} });
+  mergeBuckets(state.archive.buckets, fileState.buckets, 1);
+  if (fileState.sessions) {
+    for (const [key, entry] of Object.entries(fileState.sessions)) {
+      mergeSessionEntry(state.archive.sessions, key, entry, 1);
+    }
+  }
+  if (filePath) {
+    (_a = state.archive).files ?? (_a.files = {});
+    const snapshot = {};
+    if (hasBuckets) snapshot.buckets = sanitizeBuckets(fileState.buckets);
+    if (hasSessions) snapshot.sessions = sanitizeSessions(fileState.sessions);
+    if (fileState.ledgerFrom0) snapshot.ledgerFrom0 = true;
+    state.archive.files[filePath] = snapshot;
+  }
+}
+function revokeFileContribution(state, fileState, filePath) {
+  mergeBuckets(state.buckets, fileState.buckets, -1);
+  if (fileState.sessions) {
+    for (const [key, entry] of Object.entries(fileState.sessions)) {
+      mergeSessionEntry(state.sessions, key, entry, -1);
+    }
+  }
+  dropRecentForFile(state, filePath);
+}
+function revokeArchivedFile(state, filePath) {
+  var _a, _b;
+  const archived = (_b = (_a = state.archive) == null ? void 0 : _a.files) == null ? void 0 : _b[filePath];
+  if (!archived || !state.archive) return "none";
+  delete state.archive.files[filePath];
+  if (state.archive.files && Object.keys(state.archive.files).length === 0) delete state.archive.files;
+  mergeBuckets(state.archive.buckets, archived.buckets, -1);
+  if (archived.sessions) {
+    for (const [key, entry] of Object.entries(archived.sessions)) {
+      mergeSessionEntry(state.archive.sessions, key, entry, -1);
+    }
+  }
+  if (Object.keys(state.archive.buckets).length === 0 && Object.keys(state.archive.sessions).length === 0) {
+    delete state.archive;
+  }
+  if (!archived.ledgerFrom0) return "legacy_reset";
+  mergeBuckets(state.buckets, archived.buckets, -1);
+  if (archived.sessions) {
+    for (const [key, entry] of Object.entries(archived.sessions)) {
+      mergeSessionEntry(state.sessions, key, entry, -1);
+    }
+  }
+  dropRecentForFile(state, filePath);
+  return "revoked";
+}
+function pruneArchivedHistory(state, retentionDays = DEFAULT_ARCHIVE_RETENTION_DAYS, now = Date.now()) {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
+  const cutoffMs = now - retentionDays * 864e5;
+  const cutoffHour = localHourKey(cutoffMs);
+  if (state.archive) {
+    for (const [key, bucket] of Object.entries(state.archive.buckets)) {
+      const hour = key.split("", 1)[0] ?? "";
+      if (hour && hour < cutoffHour) {
+        addBucketByKey(state.buckets, key, {
+          r: -bucket.r,
+          i: -bucket.i,
+          o: -bucket.o,
+          cr: -bucket.cr,
+          cw: -bucket.cw,
+          rz: -bucket.rz,
+          cost: -bucket.cost,
+          credits: -bucket.credits,
+          ...bucket.bt ? { bt: [-bucket.bt[0], -bucket.bt[1], -bucket.bt[2], -bucket.bt[3]] } : {}
+        });
+        delete state.archive.buckets[key];
+        if (state.archive.files) {
+          for (const fileEntry of Object.values(state.archive.files)) {
+            if (fileEntry.buckets) delete fileEntry.buckets[key];
+          }
+        }
+      }
+    }
+    for (const [key, entry] of Object.entries(state.archive.sessions)) {
+      if (entry.e > 0 && entry.e < cutoffMs) {
+        mergeSessionEntry(state.sessions, key, entry, -1);
+        delete state.archive.sessions[key];
+        if (state.archive.files) {
+          for (const fileEntry of Object.values(state.archive.files)) {
+            if (fileEntry.sessions) delete fileEntry.sessions[key];
+          }
+        }
+      }
+    }
+    if (state.archive.files) {
+      for (const [filePath, fileEntry] of Object.entries(state.archive.files)) {
+        if (fileEntry.buckets && Object.keys(fileEntry.buckets).length === 0) delete fileEntry.buckets;
+        if (fileEntry.sessions && Object.keys(fileEntry.sessions).length === 0) delete fileEntry.sessions;
+        if (!fileEntry.buckets && !fileEntry.sessions) delete state.archive.files[filePath];
+      }
+      if (Object.keys(state.archive.files).length === 0) delete state.archive.files;
+    }
+    if (Object.keys(state.archive.buckets).length === 0 && Object.keys(state.archive.sessions).length === 0) {
+      delete state.archive;
+    }
+  }
+  if (state.agy) {
+    for (const [sid, conv] of Object.entries(state.agy)) {
+      if (!conv.archived) continue;
+      let latestHour = "";
+      for (const key of Object.keys(conv.buckets)) {
+        const hour = key.split("", 1)[0] ?? "";
+        if (hour > latestHour) latestHour = hour;
+      }
+      const sessionExpired = conv.session ? conv.session.e > 0 && conv.session.e < cutoffMs : true;
+      const bucketsExpired = !latestHour || latestHour < cutoffHour;
+      if (sessionExpired && bucketsExpired) {
+        mergeBuckets(state.buckets, conv.buckets, -1);
+        if (conv.session) mergeSessionEntry(state.sessions, `agy${sid}`, conv.session, -1);
+        delete state.agy[sid];
+      }
+    }
+    if (Object.keys(state.agy).length === 0) delete state.agy;
+  }
+}
+function recordCall(state, harness, record, replaceId) {
+  var _a;
+  let list = state.recent[harness];
+  if (!list) {
+    list = [];
+    state.recent[harness] = list;
+  }
+  if (replaceId) {
+    const floor = Math.max(0, list.length - 32);
+    for (let index = list.length - 1; index >= floor; index -= 1) {
+      if (((_a = list[index]) == null ? void 0 : _a.id) === replaceId) {
+        list[index] = record;
+        return;
+      }
+    }
+  }
+  list.push(record);
+  if (list.length > MAX_RECENT_PER_AGENT) list.splice(0, list.length - MAX_RECENT_PER_AGENT);
+}
+function finite(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+function sanitizeTokenTuple(raw) {
+  if (!Array.isArray(raw) || raw.length < 4) return void 0;
+  const entry = [finite(raw[0]), finite(raw[1]), finite(raw[2]), finite(raw[3])];
+  return entry[0] > 0 || entry[1] > 0 || entry[2] > 0 || entry[3] > 0 ? entry : void 0;
+}
+function sanitizeBuckets(raw) {
+  const buckets = {};
+  if (!raw || typeof raw !== "object") return buckets;
+  for (const [key, value] of Object.entries(raw)) {
+    if (!value || typeof value !== "object") continue;
+    const record = value;
+    const bucket = {
+      r: finite(record.r),
+      i: finite(record.i),
+      o: finite(record.o),
+      cr: finite(record.cr),
+      cw: finite(record.cw),
+      rz: finite(record.rz),
+      cost: finite(record.cost),
+      credits: finite(record.credits)
+    };
+    const bt = sanitizeTokenTuple(record.bt);
+    if (bt && bucket.cost > 0) bucket.bt = bt;
+    buckets[key] = bucket;
+  }
+  return buckets;
+}
+function sanitizeSessionModels(raw) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const models = {};
+  for (const [model, tuple] of Object.entries(raw)) {
+    if (!model) continue;
+    const entry = sanitizeTokenTuple(tuple);
+    if (entry) models[model] = entry;
+  }
+  return Object.keys(models).length > 0 ? models : void 0;
+}
+function sanitizeSessions(raw) {
+  const sessions = {};
+  if (!raw || typeof raw !== "object") return sessions;
+  for (const [key, value] of Object.entries(raw)) {
+    if (!value || typeof value !== "object") continue;
+    const record = value;
+    const models = sanitizeSessionModels(record.models);
+    const bt = sanitizeSessionModels(record.bt);
+    const entry = {
+      s: finite(record.s),
+      e: finite(record.e),
+      r: finite(record.r),
+      i: finite(record.i),
+      o: finite(record.o),
+      cr: finite(record.cr),
+      cw: finite(record.cw),
+      rz: finite(record.rz),
+      cost: finite(record.cost),
+      credits: finite(record.credits),
+      p: typeof record.p === "string" ? record.p : ""
+    };
+    if (typeof record.title === "string") entry.title = record.title;
+    if (models) entry.models = models;
+    if (bt && entry.cost > 0) entry.bt = bt;
+    sessions[key] = entry;
+  }
+  return sessions;
+}
+function sanitizeArchiveFiles(raw) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const files = {};
+  for (const [filePath, value] of Object.entries(raw)) {
+    if (!filePath || !value || typeof value !== "object") continue;
+    const record = value;
+    const buckets = record.buckets ? sanitizeBuckets(record.buckets) : void 0;
+    const sessions = record.sessions ? sanitizeSessions(record.sessions) : void 0;
+    const hasBuckets = Boolean(buckets && Object.keys(buckets).length > 0);
+    const hasSessions = Boolean(sessions && Object.keys(sessions).length > 0);
+    if (!hasBuckets && !hasSessions) continue;
+    const entry = {};
+    if (hasBuckets) entry.buckets = buckets;
+    if (hasSessions) entry.sessions = sessions;
+    if (record.ledgerFrom0 === true) entry.ledgerFrom0 = true;
+    files[filePath] = entry;
+  }
+  return Object.keys(files).length > 0 ? files : void 0;
+}
+function sanitizeAgyArchive(raw) {
+  if (!raw || typeof raw !== "object") return void 0;
+  const out = {};
+  for (const [sid, value] of Object.entries(raw)) {
+    if (!sid || !value || typeof value !== "object") continue;
+    const record = value;
+    const buckets = sanitizeBuckets(record.buckets);
+    const sessionMap = record.session ? sanitizeSessions({ s: record.session }) : {};
+    const session = sessionMap.s;
+    const keys = Array.isArray(record.keys) ? record.keys.filter((item) => typeof item === "string") : void 0;
+    if (Object.keys(buckets).length > 0 || session) {
+      const entry = session ? { buckets, session } : { buckets };
+      if (keys && keys.length > 0) entry.keys = keys;
+      if (record.archived === true) entry.archived = true;
+      out[sid] = entry;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : void 0;
+}
+async function loadState(dir) {
+  var _a, _b, _c, _d, _e, _f, _g, _h;
+  try {
+    const text = await (0, import_promises2.readFile)((0, import_node_path2.join)(dir, "state.json"), "utf8");
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || parsed.version !== STATE_VERSION) return emptyState();
+    const state = emptyState();
+    state.buckets = sanitizeBuckets(parsed.buckets);
+    state.sessions = sanitizeSessions(parsed.sessions);
+    state.files = parsed.files ?? {};
+    state.recent = parsed.recent ?? {};
+    state.opencode = {
+      watermark: finite((_a = parsed.opencode) == null ? void 0 : _a.watermark),
+      lastId: typeof ((_b = parsed.opencode) == null ? void 0 : _b.lastId) === "string" ? parsed.opencode.lastId : "",
+      legacyWatermark: typeof ((_c = parsed.opencode) == null ? void 0 : _c.legacyWatermark) === "number" ? parsed.opencode.legacyWatermark : void 0,
+      legacyLastId: typeof ((_d = parsed.opencode) == null ? void 0 : _d.legacyLastId) === "string" ? parsed.opencode.legacyLastId : void 0,
+      seen: Array.isArray((_e = parsed.opencode) == null ? void 0 : _e.seen) ? parsed.opencode.seen.filter((id) => typeof id === "string") : void 0
+    };
+    state.pi = { seen: Array.isArray((_f = parsed.pi) == null ? void 0 : _f.seen) ? parsed.pi.seen.filter((k) => typeof k === "string") : [] };
+    state.hosts = parsed.hosts ?? {};
+    if (parsed.archive && typeof parsed.archive === "object") {
+      const archiveBuckets = sanitizeBuckets(parsed.archive.buckets);
+      const archiveSessions = sanitizeSessions(parsed.archive.sessions);
+      const archiveFiles = sanitizeArchiveFiles(parsed.archive.files);
+      if (Object.keys(archiveBuckets).length > 0 || Object.keys(archiveSessions).length > 0) {
+        state.archive = { buckets: archiveBuckets, sessions: archiveSessions, ...archiveFiles ? { files: archiveFiles } : {} };
+      }
+    }
+    const agy = sanitizeAgyArchive(parsed.agy);
+    if (agy) state.agy = agy;
+    state.meta = {
+      lastScanAt: typeof ((_g = parsed.meta) == null ? void 0 : _g.lastScanAt) === "number" ? parsed.meta.lastScanAt : null,
+      scanError: typeof ((_h = parsed.meta) == null ? void 0 : _h.scanError) === "string" ? parsed.meta.scanError : null
+    };
+    return state;
+  } catch {
+    return emptyState();
+  }
+}
+async function saveState(dir, state) {
+  pruneSessions(state.sessions);
+  for (const host of Object.values(state.hosts ?? {})) if (host == null ? void 0 : host.sessions) pruneSessions(host.sessions);
+  await (0, import_promises2.mkdir)(dir, { recursive: true, mode: 448 }).catch(() => {
+  });
+  const file = (0, import_node_path2.join)(dir, "state.json");
+  const temporary = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+  await (0, import_promises2.writeFile)(temporary, JSON.stringify(state), { mode: 384 });
+  await (0, import_promises2.rename)(temporary, file);
+  await (0, import_promises2.chmod)(dir, 448).catch(() => {
+  });
+}
+
 // server/scan/claude.ts
 var CLAUDE = "claude";
 function claudeRoots(env = process.env) {
@@ -292,6 +633,8 @@ function claudeRoots(env = process.env) {
 async function scanClaudeFile(state, path) {
   const previousState = state.files[path];
   const recent = /* @__PURE__ */ new Map();
+  const fileBuckets = (previousState == null ? void 0 : previousState.buckets) ? { ...previousState.buckets } : {};
+  const fileSessions = (previousState == null ? void 0 : previousState.sessions) ? { ...previousState.sessions } : {};
   let sessionTitle = (previousState == null ? void 0 : previousState.sessionTitle) ?? "";
   if (previousState == null ? void 0 : previousState.recent) {
     for (const contribution of previousState.recent) recent.set(contribution.id, contribution);
@@ -340,7 +683,7 @@ async function scanClaudeFile(state, path) {
     };
     if (id && recent.has(id)) {
       const before = recent.get(id);
-      addBucket(state.buckets, before.d, CLAUDE, before.m, before.p, {
+      recordFileBucket(state, fileBuckets, before.d, CLAUDE, before.m, before.p, {
         r: -1,
         i: -before.i,
         o: -before.o,
@@ -348,13 +691,14 @@ async function scanClaudeFile(state, path) {
         cw: -before.cw,
         rz: -before.rz
       });
-      applySession(state.sessions, CLAUDE, sid, {
+      recordFileSession(state, fileSessions, CLAUDE, sid, {
         r: -1,
         i: -before.i,
         o: -before.o,
         cr: -before.cr,
         cw: -before.cw,
-        rz: -before.rz
+        rz: -before.rz,
+        model: before.m
       });
     }
     if (id) {
@@ -364,7 +708,7 @@ async function scanClaudeFile(state, path) {
         if (typeof oldest === "string" && oldest !== id) recent.delete(oldest);
       }
     }
-    addBucket(state.buckets, contribution.d, CLAUDE, contribution.m, contribution.p, {
+    recordFileBucket(state, fileBuckets, contribution.d, CLAUDE, contribution.m, contribution.p, {
       r: 1,
       i: contribution.i,
       o: contribution.o,
@@ -372,7 +716,7 @@ async function scanClaudeFile(state, path) {
       cw: contribution.cw,
       rz: contribution.rz
     });
-    applySession(state.sessions, CLAUDE, sid, {
+    recordFileSession(state, fileSessions, CLAUDE, sid, {
       t: ts,
       r: 1,
       p: contribution.p,
@@ -381,6 +725,7 @@ async function scanClaudeFile(state, path) {
       cr: contribution.cr,
       cw: contribution.cw,
       rz: contribution.rz,
+      model: contribution.m,
       title: sessionTitle || void 0
     });
     recordCall(
@@ -398,15 +743,20 @@ async function scanClaudeFile(state, path) {
         rz: contribution.rz,
         cost: 0,
         credits: 0,
-        id: id ?? void 0
+        id: id ?? void 0,
+        f: path
       },
       id ?? void 0
     );
   });
   if (!result) return;
+  const ledgerFrom0 = !previousState || previousState.offset === 0 || Boolean(previousState.ledgerFrom0);
   const fileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs };
+  if (ledgerFrom0) fileState.ledgerFrom0 = true;
   if (sessionTitle) fileState.sessionTitle = sessionTitle;
   if (recent.size > 0) fileState.recent = [...recent.values()].slice(-96);
+  if (Object.keys(fileBuckets).length > 0) fileState.buckets = fileBuckets;
+  if (Object.keys(fileSessions).length > 0) fileState.sessions = fileSessions;
   state.files[path] = fileState;
 }
 
@@ -460,6 +810,8 @@ function sessionLabel(entry) {
 }
 async function scanCodebuddyFile(state, path) {
   const previousState = state.files[path];
+  const fileBuckets = (previousState == null ? void 0 : previousState.buckets) ? { ...previousState.buckets } : {};
+  const fileSessions = (previousState == null ? void 0 : previousState.sessions) ? { ...previousState.sessions } : {};
   let sessionTitle = (previousState == null ? void 0 : previousState.sessionTitle) ?? "";
   const result = await forEachNewLine(path, (previousState == null ? void 0 : previousState.offset) ?? 0, (line) => {
     if (!line.includes('"usage"') && (sessionTitle || !line.includes('"role"'))) return;
@@ -487,7 +839,7 @@ async function scanCodebuddyFile(state, path) {
     const input = inputTotal - cacheRead;
     const output = num(usage.outputTokens);
     const reasoning = sumDetail(usage.outputTokensDetails, "reasoning_tokens");
-    addBucket(state.buckets, localHourKey(ts), CODEBUDDY, model, project, {
+    recordFileBucket(state, fileBuckets, localHourKey(ts), CODEBUDDY, model, project, {
       r: 1,
       i: input,
       o: output,
@@ -495,10 +847,11 @@ async function scanCodebuddyFile(state, path) {
       cw: 0,
       rz: reasoning
     });
-    applySession(state.sessions, CODEBUDDY, sid, {
+    recordFileSession(state, fileSessions, CODEBUDDY, sid, {
       t: ts,
       r: 1,
       p: project,
+      model,
       i: input,
       o: output,
       cr: cacheRead,
@@ -517,12 +870,17 @@ async function scanCodebuddyFile(state, path) {
       cw: 0,
       rz: reasoning,
       cost: 0,
-      credits: 0
+      credits: 0,
+      f: path
     });
   });
   if (!result) return;
+  const ledgerFrom0 = !previousState || previousState.offset === 0 || Boolean(previousState.ledgerFrom0);
   const fileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs };
+  if (ledgerFrom0) fileState.ledgerFrom0 = true;
   if (sessionTitle) fileState.sessionTitle = sessionTitle;
+  if (Object.keys(fileBuckets).length > 0) fileState.buckets = fileBuckets;
+  if (Object.keys(fileSessions).length > 0) fileState.sessions = fileSessions;
   state.files[path] = fileState;
 }
 
@@ -538,6 +896,8 @@ function codexRoots(env = process.env) {
 var BURST_WINDOW_MS = 2e3;
 async function scanCodexFile(state, path) {
   const previousState = state.files[path];
+  const fileBuckets = (previousState == null ? void 0 : previousState.buckets) ? { ...previousState.buckets } : {};
+  const fileSessions = (previousState == null ? void 0 : previousState.sessions) ? { ...previousState.sessions } : {};
   let project = (previousState == null ? void 0 : previousState.project) ?? "";
   let model = (previousState == null ? void 0 : previousState.model) ?? "";
   let session = (previousState == null ? void 0 : previousState.session) ?? "";
@@ -625,7 +985,8 @@ async function scanCodexFile(state, path) {
           const lOutput = num(last.output_tokens);
           if (lInput + lCached + lOutput > 0) {
             const input2 = Math.max(0, lInput - lCached);
-            addBucket(state.buckets, localHourKey(ts), CODEX, model || "codex", project, {
+            const activeModel2 = model || "codex";
+            recordFileBucket(state, fileBuckets, localHourKey(ts), CODEX, activeModel2, project, {
               r: 1,
               i: input2,
               o: lOutput,
@@ -633,10 +994,11 @@ async function scanCodexFile(state, path) {
               cw: num(last.cache_write_input_tokens),
               rz: num(last.reasoning_output_tokens)
             });
-            applySession(state.sessions, CODEX, session, {
+            recordFileSession(state, fileSessions, CODEX, session, {
               t: ts,
               r: 1,
               p: project,
+              model: activeModel2,
               title: title || void 0,
               i: input2,
               o: lOutput,
@@ -646,7 +1008,7 @@ async function scanCodexFile(state, path) {
             });
             recordCall(state, CODEX, {
               t: ts,
-              m: model || "codex",
+              m: activeModel2,
               p: project,
               s: session,
               i: input2,
@@ -655,7 +1017,8 @@ async function scanCodexFile(state, path) {
               cw: num(last.cache_write_input_tokens),
               rz: num(last.reasoning_output_tokens),
               cost: 0,
-              credits: 0
+              credits: 0,
+              f: path
             });
           }
         }
@@ -686,7 +1049,8 @@ async function scanCodexFile(state, path) {
     if (dTotal <= 0) return;
     if (!Number.isFinite(ts)) return;
     const input = Math.max(0, dInput - dCached);
-    addBucket(state.buckets, localHourKey(ts), CODEX, model || "codex", project, {
+    const activeModel = model || "codex";
+    recordFileBucket(state, fileBuckets, localHourKey(ts), CODEX, activeModel, project, {
       r: 1,
       i: input,
       o: dOutput,
@@ -694,10 +1058,11 @@ async function scanCodexFile(state, path) {
       cw: dCacheWrite,
       rz: dReasoning
     });
-    applySession(state.sessions, CODEX, session, {
+    recordFileSession(state, fileSessions, CODEX, session, {
       t: ts,
       r: 1,
       p: project,
+      model: activeModel,
       title: title || void 0,
       i: input,
       o: dOutput,
@@ -707,7 +1072,7 @@ async function scanCodexFile(state, path) {
     });
     recordCall(state, CODEX, {
       t: ts,
-      m: model || "codex",
+      m: activeModel,
       p: project,
       s: session,
       i: input,
@@ -716,14 +1081,19 @@ async function scanCodexFile(state, path) {
       cw: dCacheWrite,
       rz: dReasoning,
       cost: 0,
-      credits: 0
+      credits: 0,
+      f: path
     });
   });
   if (!result) return;
+  const ledgerFrom0 = !previousState || previousState.offset === 0 || Boolean(previousState.ledgerFrom0);
   const fileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, model, session };
+  if (ledgerFrom0) fileState.ledgerFrom0 = true;
   if (title) fileState.sessionTitle = title;
   if (totals) fileState.totals = totals;
   if (fork.forked) fileState.codexFork = fork;
+  if (Object.keys(fileBuckets).length > 0) fileState.buckets = fileBuckets;
+  if (Object.keys(fileSessions).length > 0) fileState.sessions = fileSessions;
   state.files[path] = fileState;
 }
 
@@ -850,6 +1220,7 @@ function countCall(state, call, seen, seenOrder) {
     t: call.ts,
     r: 1,
     p: call.project,
+    model: call.model,
     i: call.input,
     o: outputWithReasoning,
     cr: call.cacheRead,
@@ -1063,6 +1434,8 @@ function piRoots(env = process.env) {
 }
 async function scanPiFile(state, path) {
   const previousState = state.files[path];
+  const fileBuckets = (previousState == null ? void 0 : previousState.buckets) ? { ...previousState.buckets } : {};
+  const fileSessions = (previousState == null ? void 0 : previousState.sessions) ? { ...previousState.sessions } : {};
   let project = (previousState == null ? void 0 : previousState.project) ?? "";
   let title = (previousState == null ? void 0 : previousState.sessionTitle) ?? "";
   const base = path.split("/").pop() ?? "";
@@ -1120,7 +1493,7 @@ async function scanPiFile(state, path) {
     const cacheRead = num(usage.cacheRead);
     const cacheWrite = num(usage.cacheWrite);
     const reasoning = num(usage.reasoning);
-    addBucket(state.buckets, localHourKey(ts), PI, model, project, {
+    recordFileBucket(state, fileBuckets, localHourKey(ts), PI, model, project, {
       r: 1,
       i: input,
       o: output,
@@ -1129,10 +1502,11 @@ async function scanPiFile(state, path) {
       rz: reasoning,
       cost
     });
-    applySession(state.sessions, PI, session, {
+    recordFileSession(state, fileSessions, PI, session, {
       t: ts,
       r: 1,
       p: project,
+      model,
       title: title || void 0,
       i: input,
       o: output,
@@ -1152,7 +1526,8 @@ async function scanPiFile(state, path) {
       cw: cacheWrite,
       rz: reasoning,
       cost,
-      credits: 0
+      credits: 0,
+      f: path
     });
   });
   if (!result) return;
@@ -1160,7 +1535,12 @@ async function scanPiFile(state, path) {
     const removed = state.pi.seen.splice(0, state.pi.seen.length - PI_SEEN_LIMIT);
     for (const key of removed) seen.delete(key);
   }
-  state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, sessionTitle: title || void 0 };
+  const ledgerFrom0 = !previousState || previousState.offset === 0 || Boolean(previousState.ledgerFrom0);
+  const fileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, sessionTitle: title || void 0 };
+  if (ledgerFrom0) fileState.ledgerFrom0 = true;
+  if (Object.keys(fileBuckets).length > 0) fileState.buckets = fileBuckets;
+  if (Object.keys(fileSessions).length > 0) fileState.sessions = fileSessions;
+  state.files[path] = fileState;
 }
 
 // server/scan/agy.ts
@@ -1279,6 +1659,7 @@ function readConversation(sqlite, file, sid, project, replayed) {
     const times = /* @__PURE__ */ new Map();
     for (const row of steps) times.set(row.idx, readCreatedAt(row.metadata));
     const calls = [];
+    const keys = [];
     const generations = db.prepare("SELECT data FROM gen_metadata ORDER BY idx").all();
     for (const row of generations) {
       const generation = readGeneration(row.data);
@@ -1289,10 +1670,11 @@ function readConversation(sqlite, file, sid, project, replayed) {
       const key = JSON.stringify([created.seconds, created.nanos, model, tokens.i, tokens.o, tokens.cr, tokens.cw, tokens.rz]);
       if (replayed.has(key)) continue;
       replayed.add(key);
+      keys.push(key);
       const t = created.seconds * 1e3 + Math.floor(created.nanos / 1e6);
       calls.push({ t, m: model, p: project, s: sid, ...tokens, cost: 0, credits: 0 });
     }
-    return calls;
+    return { calls, keys };
   } finally {
     db.close();
   }
@@ -1302,7 +1684,7 @@ function isUnsupportedDatabase(error) {
   const code = typeof error.errcode === "number" ? error.errcode & 255 : 0;
   return code === 11 || code === 26 || code === 1 && /no such (?:table|column):/i.test(error.message);
 }
-async function scanAgy(state, shouldStop, root = (0, import_node_path8.join)((0, import_node_os6.homedir)(), ".gemini", "antigravity-cli")) {
+async function scanAgy(state, shouldStop, root = (0, import_node_path8.join)((0, import_node_os6.homedir)(), ".gemini", "antigravity-cli"), options) {
   var _a, _b, _c;
   const directory = (0, import_node_path8.join)(root, "conversations");
   const entries = await (0, import_promises3.readdir)(directory, { withFileTypes: true }).catch((error) => {
@@ -1320,35 +1702,56 @@ async function scanAgy(state, shouldStop, root = (0, import_node_path8.join)((0,
     return;
   }
   const projects = readProjects(sqlite, root);
-  const next = emptyState();
+  const freshBySid = /* @__PURE__ */ new Map();
+  const presentOnDisk = /* @__PURE__ */ new Set();
+  const unreadableOnDisk = /* @__PURE__ */ new Set();
   const replayed = /* @__PURE__ */ new Set();
-  let recent = [];
-  let read = 0;
-  let skipped = 0;
+  const dbEntries = [];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const sid = (_c = DATABASE_NAME.exec(entry.name)) == null ? void 0 : _c[1];
     if (!sid || !entry.isFile()) continue;
+    dbEntries.push({ sid, name: entry.name });
+  }
+  const diskSids = new Set(dbEntries.map((item) => item.sid));
+  for (const [sid, archived] of Object.entries(state.agy ?? {})) {
+    if (diskSids.has(sid) || !archived.keys) continue;
+    for (const key of archived.keys) replayed.add(key);
+  }
+  let recent = [];
+  let read = 0;
+  let skipped = 0;
+  for (const { sid, name } of dbEntries) {
     await new Promise((resolve2) => (0, import_node_timers.setImmediate)(resolve2));
     if (shouldStop()) return;
     const project = projects.get(sid) ?? "";
-    const file = (0, import_node_path8.join)(directory, entry.name);
-    let calls;
+    const file = (0, import_node_path8.join)(directory, name);
+    let parsed;
     try {
-      calls = readConversation(sqlite, file, sid, project, replayed);
+      parsed = readConversation(sqlite, file, sid, project, replayed);
     } catch (error) {
       const present = await (0, import_promises3.stat)(file).then(() => true, (failure) => failure.code !== "ENOENT");
       if (!present) continue;
       if (!isUnsupportedDatabase(error)) throw error;
+      presentOnDisk.add(sid);
+      unreadableOnDisk.add(sid);
       skipped += 1;
       continue;
     }
     read += 1;
-    for (const call of calls) {
-      const delta = { ...call, r: 1 };
-      addBucket(next.buckets, localHourKey(call.t), AGY, call.m, project, delta);
-      applySession(next.sessions, AGY, sid, delta);
-    }
+    presentOnDisk.add(sid);
+    const { calls, keys } = parsed;
     if (calls.length) {
+      const convBuckets = {};
+      const convSessions = {};
+      for (const call of calls) {
+        const delta = { ...call, r: 1, model: call.m };
+        addBucket(convBuckets, localHourKey(call.t), AGY, call.m, project, delta);
+        applySession(convSessions, AGY, sid, delta);
+      }
+      const session = convSessions[`${AGY}${sid}`];
+      const conv = session ? { buckets: convBuckets, session } : { buckets: convBuckets };
+      if (keys.length > 0) conv.keys = keys;
+      freshBySid.set(sid, conv);
       recent = recent.concat(calls).sort((a, b) => a.t - b.t).slice(-MAX_RECENT_PER_AGENT);
     }
   }
@@ -1356,29 +1759,53 @@ async function scanAgy(state, shouldStop, root = (0, import_node_path8.join)((0,
     console.warn(`[agent-usage] agy skipped ${skipped} corrupt or incompatible conversation database(s)`);
     if (!read) return;
   }
+  const nextAgy = {};
+  for (const [sid, archived] of Object.entries(state.agy ?? {})) {
+    if (!presentOnDisk.has(sid)) {
+      nextAgy[sid] = { ...archived, archived: true };
+    } else if (unreadableOnDisk.has(sid)) {
+      const kept = archived.session ? { buckets: archived.buckets, session: archived.session } : { buckets: archived.buckets };
+      if (archived.keys && archived.keys.length > 0) kept.keys = archived.keys;
+      nextAgy[sid] = kept;
+    }
+  }
+  for (const [sid, fresh] of freshBySid) {
+    nextAgy[sid] = fresh;
+  }
   for (const key of Object.keys(state.buckets)) {
     if (key.split("", 2)[1] === AGY) delete state.buckets[key];
   }
   for (const key of Object.keys(state.sessions)) {
     if (key.startsWith(AGY + "")) delete state.sessions[key];
   }
-  Object.assign(state.buckets, next.buckets);
-  Object.assign(state.sessions, next.sessions);
-  state.recent[AGY] = recent;
+  for (const [sid, conv] of Object.entries(nextAgy)) {
+    mergeBuckets(state.buckets, conv.buckets, 1);
+    if (conv.session) mergeSessionEntry(state.sessions, `${AGY}${sid}`, conv.session, 1);
+  }
+  if (Object.keys(nextAgy).length > 0) state.agy = nextAgy;
+  else delete state.agy;
+  const retentionDays = (options == null ? void 0 : options.archiveRetentionDays) ?? DEFAULT_ARCHIVE_RETENTION_DAYS;
+  pruneArchivedHistory(state, retentionDays, (options == null ? void 0 : options.now) ?? Date.now());
+  if (recent.length > 0 || state.recent[AGY] === void 0) {
+    state.recent[AGY] = recent;
+  }
 }
 
 // server/scan/scanner.ts
-async function scanAll(state, callbacks, enabledHarnesses) {
-  if (await filesShrank(state)) {
-    console.warn("[agent-usage] log file shrank; resetting counters and rescanning from zero");
-    resetCounters(state);
-  }
+async function scanAll(state, callbacks, enabledHarnesses, options) {
   const on = (id) => !enabledHarnesses || enabledHarnesses.has(id);
+  const retentionDays = (options == null ? void 0 : options.archiveRetentionDays) ?? DEFAULT_ARCHIVE_RETENTION_DAYS;
+  const now = (options == null ? void 0 : options.now) ?? Date.now();
   const [claudeFiles, piFiles, codexFiles, codebuddyFiles] = await Promise.all([
     collectRoots(claudeRoots()),
     collectRoots(piRoots()),
     collectRoots(codexRoots()),
     collectRoots(codebuddyRoots())
+  ]);
+  await reconcileTrackedFiles(state, new Set(piFiles), [
+    ...on("claude") ? claudeFiles : [],
+    ...on("codex") ? codexFiles : [],
+    ...on("codebuddy") ? codebuddyFiles : []
   ]);
   const total = (on("claude") ? claudeFiles.length : 0) + (on("pi") ? piFiles.length : 0) + (on("codex") ? codexFiles.length : 0) + (on("codebuddy") ? codebuddyFiles.length : 0) + (on("opencode") ? 1 : 0) + (on(AGY) ? 1 : 0);
   let done = 0;
@@ -1387,9 +1814,9 @@ async function scanAll(state, callbacks, enabledHarnesses) {
   const tick = () => {
     done += 1;
     callbacks.onProgress(done, total);
-    const now = Date.now();
-    if (now - checkpointAt > 5e3) {
-      checkpointAt = now;
+    const nowTick = Date.now();
+    if (nowTick - checkpointAt > 5e3) {
+      checkpointAt = nowTick;
       callbacks.onCheckpoint();
     }
   };
@@ -1421,12 +1848,13 @@ async function scanAll(state, callbacks, enabledHarnesses) {
   if (on(AGY)) {
     if (callbacks.shouldStop()) return;
     try {
-      await scanAgy(state, callbacks.shouldStop);
+      await scanAgy(state, callbacks.shouldStop, void 0, { archiveRetentionDays: retentionDays, now });
     } catch {
       console.warn("[agent-usage] agy scan could not read the local conversation databases");
     }
     tick();
   }
+  pruneArchivedHistory(state, retentionDays, now);
   callbacks.onCheckpoint();
 }
 async function collectRoots(roots) {
@@ -1436,24 +1864,66 @@ async function collectRoots(roots) {
   }
   return [...seen].sort();
 }
-async function filesShrank(state) {
+async function reconcileTrackedFiles(state, piFiles, reappearingCandidates = []) {
+  var _a;
+  let needsLegacyReset = false;
   for (const [path, file] of Object.entries(state.files)) {
-    if (!file || !(file.offset > 0)) continue;
+    if (!file) {
+      delete state.files[path];
+      continue;
+    }
     try {
       const info = await (0, import_promises4.stat)(path);
-      if (info.isFile() && info.size < file.offset) return true;
-    } catch {
+      if (file.offset > 0 && info.isFile() && info.size < file.offset) {
+        const hasCompleteLedger = Boolean(file.ledgerFrom0);
+        if (hasCompleteLedger && !piFiles.has(path)) {
+          console.warn("[agent-usage] log file shrank; rescanning file surgically without dropping archive");
+          revokeFileContribution(state, file, path);
+          delete state.files[path];
+        } else {
+          needsLegacyReset = true;
+        }
+      }
+    } catch (error) {
+      const code = error == null ? void 0 : error.code;
+      if (code === "ENOENT") {
+        archiveFileContribution(state, file, path);
+        delete state.files[path];
+      }
     }
   }
-  return false;
+  if ((_a = state.archive) == null ? void 0 : _a.files) {
+    for (const path of reappearingCandidates) {
+      if (state.files[path] || !state.archive.files[path]) continue;
+      if (revokeArchivedFile(state, path) === "legacy_reset") {
+        needsLegacyReset = true;
+      }
+    }
+  }
+  if (needsLegacyReset) {
+    console.warn("[agent-usage] legacy log file shrank; resetting active counters while preserving archive");
+    resetCountersPreservingArchive(state);
+  }
 }
-function resetCounters(state) {
+function resetCountersPreservingArchive(state) {
   state.buckets = {};
   state.sessions = {};
   state.files = {};
   state.recent = {};
   state.opencode = { watermark: 0, lastId: "" };
   state.pi = { seen: [] };
+  if (state.archive) {
+    mergeBuckets(state.buckets, state.archive.buckets, 1);
+    for (const [key, entry] of Object.entries(state.archive.sessions)) {
+      mergeSessionEntry(state.sessions, key, entry, 1);
+    }
+  }
+  if (state.agy) {
+    for (const [sid, conv] of Object.entries(state.agy)) {
+      mergeBuckets(state.buckets, conv.buckets, 1);
+      if (conv.session) mergeSessionEntry(state.sessions, `${AGY}${sid}`, conv.session, 1);
+    }
+  }
 }
 
 // server/remote/collector.ts
@@ -1461,29 +1931,48 @@ function argValue(args, name) {
   const index = args.indexOf(name);
   return index >= 0 && index + 1 < args.length ? args[index + 1] ?? null : null;
 }
+function parseRetentionDays(args) {
+  const raw = argValue(args, "--archive-retention-days");
+  if (raw === null) return DEFAULT_ARCHIVE_RETENTION_DAYS;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? Math.min(3650, Math.round(value)) : DEFAULT_ARCHIVE_RETENTION_DAYS;
+}
+function exportRecent(recent) {
+  const out = {};
+  for (const [harness, list] of Object.entries(recent)) {
+    out[harness] = list.map(({ f: _file, ...rest }) => rest);
+  }
+  return out;
+}
 async function main() {
   const args = process.argv.slice(2);
   const cacheDir = argValue(args, "--cache-dir") || (0, import_node_path9.join)((0, import_node_os7.homedir)(), ".cache", "agent-usage-plugin");
+  const archiveRetentionDays = parseRetentionDays(args);
   const fresh = args.includes("--fresh");
   process.stderr.write(`agent-usage collector: node ${process.version}, cache ${cacheDir}${fresh ? ", fresh" : ""}
 `);
   const state = fresh ? emptyState() : await loadState(cacheDir);
   let lastLog = 0;
-  await scanAll(state, {
-    shouldStop: () => false,
-    onProgress: (done, total) => {
-      const now = Date.now();
-      if (now - lastLog > 3e3 || done === total) {
-        lastLog = now;
-        process.stderr.write(`progress ${done}/${total}
+  await scanAll(
+    state,
+    {
+      shouldStop: () => false,
+      onProgress: (done, total) => {
+        const now = Date.now();
+        if (now - lastLog > 3e3 || done === total) {
+          lastLog = now;
+          process.stderr.write(`progress ${done}/${total}
 `);
+        }
+      },
+      onCheckpoint: () => {
+        void saveState(cacheDir, state).catch(() => {
+        });
       }
     },
-    onCheckpoint: () => {
-      void saveState(cacheDir, state).catch(() => {
-      });
-    }
-  });
+    void 0,
+    { archiveRetentionDays }
+  );
   state.meta.lastScanAt = Date.now();
   state.meta.scanError = null;
   await saveState(cacheDir, state);
@@ -1493,7 +1982,7 @@ async function main() {
     node: process.version,
     buckets: state.buckets,
     sessions: state.sessions,
-    recent: state.recent
+    recent: exportRecent(state.recent)
   };
   process.stdout.write(JSON.stringify(projection));
   process.stderr.write(`agent-usage collector: done, ${Object.keys(state.buckets).length} buckets

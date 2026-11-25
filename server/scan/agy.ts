@@ -4,7 +4,20 @@ import { join } from "node:path";
 import { setImmediate } from "node:timers";
 import { fileURLToPath } from "node:url";
 import { loadSqlite } from "./opencode";
-import { addBucket, applySession, emptyState, MAX_RECENT_PER_AGENT, type CallRecord, type ScanState } from "./state";
+import {
+  addBucket,
+  applySession,
+  DEFAULT_ARCHIVE_RETENTION_DAYS,
+  MAX_RECENT_PER_AGENT,
+  mergeBuckets,
+  mergeSessionEntry,
+  pruneArchivedHistory,
+  type AgyConversationArchive,
+  type CallRecord,
+  type ScanState,
+  type SessionEntry,
+  type UsageBucket,
+} from "./state";
 import { localHourKey } from "./util";
 
 export const AGY = "agy";
@@ -138,7 +151,7 @@ function readConversation(
   sid: string,
   project: string,
   replayed: Set<string>,
-): CallRecord[] {
+): { calls: CallRecord[]; keys: string[] } {
   const db = new sqlite.DatabaseSync(file, { readOnly: true });
   try {
     db.exec("BEGIN");
@@ -147,6 +160,7 @@ function readConversation(
     for (const row of steps as { idx: number; metadata: unknown }[]) times.set(row.idx, readCreatedAt(row.metadata));
 
     const calls: CallRecord[] = [];
+    const keys: string[] = [];
     const generations = db.prepare("SELECT data FROM gen_metadata ORDER BY idx").all();
     for (const row of generations as { data: unknown }[]) {
       const generation = readGeneration(row.data);
@@ -158,10 +172,11 @@ function readConversation(
       const key = JSON.stringify([created.seconds, created.nanos, model, tokens.i, tokens.o, tokens.cr, tokens.cw, tokens.rz]);
       if (replayed.has(key)) continue;
       replayed.add(key);
+      keys.push(key);
       const t = created.seconds * 1000 + Math.floor(created.nanos / 1_000_000);
       calls.push({ t, m: model, p: project, s: sid, ...tokens, cost: 0, credits: 0 });
     }
-    return calls;
+    return { calls, keys };
   } finally {
     db.close();
   }
@@ -178,6 +193,7 @@ export async function scanAgy(
   state: ScanState,
   shouldStop: () => boolean,
   root = join(homedir(), ".gemini", "antigravity-cli"),
+  options?: { archiveRetentionDays?: number; now?: number },
 ): Promise<void> {
   const directory = join(root, "conversations");
   const entries = await readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
@@ -196,35 +212,58 @@ export async function scanAgy(
   }
 
   const projects = readProjects(sqlite, root);
-  const next = emptyState();
+  const freshBySid = new Map<string, AgyConversationArchive>();
+  const presentOnDisk = new Set<string>();
+  const unreadableOnDisk = new Set<string>();
   const replayed = new Set<string>();
-  let recent: CallRecord[] = [];
-  let read = 0;
-  let skipped = 0;
+  const dbEntries: Array<{ sid: string; name: string }> = [];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const sid = DATABASE_NAME.exec(entry.name)?.[1];
     if (!sid || !entry.isFile()) continue;
+    dbEntries.push({ sid, name: entry.name });
+  }
+  const diskSids = new Set(dbEntries.map((item) => item.sid));
+  // Seed `replayed` with call keys already retained in archived (vanished) conversations so
+  // deleting either a parent or a forked DB never double-counts shared calls in the surviving DB.
+  for (const [sid, archived] of Object.entries(state.agy ?? {})) {
+    if (diskSids.has(sid) || !archived.keys) continue;
+    for (const key of archived.keys) replayed.add(key);
+  }
+  let recent: CallRecord[] = [];
+  let read = 0;
+  let skipped = 0;
+  for (const { sid, name } of dbEntries) {
     await new Promise<void>((resolve) => setImmediate(resolve));
     if (shouldStop()) return;
     const project = projects.get(sid) ?? "";
-    const file = join(directory, entry.name);
-    let calls: CallRecord[];
+    const file = join(directory, name);
+    let parsed: { calls: CallRecord[]; keys: string[] };
     try {
-      calls = readConversation(sqlite, file, sid, project, replayed);
+      parsed = readConversation(sqlite, file, sid, project, replayed);
     } catch (error) {
       const present = await stat(file).then(() => true, (failure: NodeJS.ErrnoException) => failure.code !== "ENOENT");
       if (!present) continue;
       if (!isUnsupportedDatabase(error)) throw error;
+      presentOnDisk.add(sid);
+      unreadableOnDisk.add(sid);
       skipped += 1;
       continue;
     }
     read += 1;
-    for (const call of calls) {
-      const delta = { ...call, r: 1 };
-      addBucket(next.buckets, localHourKey(call.t), AGY, call.m, project, delta);
-      applySession(next.sessions, AGY, sid, delta);
-    }
+    presentOnDisk.add(sid);
+    const { calls, keys } = parsed;
     if (calls.length) {
+      const convBuckets: Record<string, UsageBucket> = {};
+      const convSessions: Record<string, SessionEntry> = {};
+      for (const call of calls) {
+        const delta = { ...call, r: 1, model: call.m };
+        addBucket(convBuckets, localHourKey(call.t), AGY, call.m, project, delta);
+        applySession(convSessions, AGY, sid, delta);
+      }
+      const session = convSessions[`${AGY}\u0001${sid}`];
+      const conv: AgyConversationArchive = session ? { buckets: convBuckets, session } : { buckets: convBuckets };
+      if (keys.length > 0) conv.keys = keys;
+      freshBySid.set(sid, conv);
       recent = recent.concat(calls).sort((a, b) => a.t - b.t).slice(-MAX_RECENT_PER_AGENT);
     }
   }
@@ -234,15 +273,42 @@ export async function scanAgy(
     if (!read) return;
   }
 
-  // Replace agy's projection only after a complete read. SQLite rows can be
-  // rewritten by agy, so appending them to the last projection would double-count.
+  // Merge on-disk conversations with previously archived (vanished) conversations.
+  // Present DBs replace their own prior projection so SQLite rewrites never double-count,
+  // unreadable DBs still on disk stay unflagged, and deleted DBs survive up to `archiveRetentionDays`.
+  const nextAgy: Record<string, AgyConversationArchive> = {};
+  for (const [sid, archived] of Object.entries(state.agy ?? {})) {
+    if (!presentOnDisk.has(sid)) {
+      nextAgy[sid] = { ...archived, archived: true };
+    } else if (unreadableOnDisk.has(sid)) {
+      const kept: AgyConversationArchive = archived.session
+        ? { buckets: archived.buckets, session: archived.session }
+        : { buckets: archived.buckets };
+      if (archived.keys && archived.keys.length > 0) kept.keys = archived.keys;
+      nextAgy[sid] = kept;
+    }
+  }
+  for (const [sid, fresh] of freshBySid) {
+    nextAgy[sid] = fresh;
+  }
+
   for (const key of Object.keys(state.buckets)) {
     if (key.split("\u0001", 2)[1] === AGY) delete state.buckets[key];
   }
   for (const key of Object.keys(state.sessions)) {
     if (key.startsWith(AGY + "\u0001")) delete state.sessions[key];
   }
-  Object.assign(state.buckets, next.buckets);
-  Object.assign(state.sessions, next.sessions);
-  state.recent[AGY] = recent;
+  for (const [sid, conv] of Object.entries(nextAgy)) {
+    mergeBuckets(state.buckets, conv.buckets, 1);
+    if (conv.session) mergeSessionEntry(state.sessions, `${AGY}\u0001${sid}`, conv.session, 1);
+  }
+  if (Object.keys(nextAgy).length > 0) state.agy = nextAgy;
+  else delete state.agy;
+
+  const retentionDays = options?.archiveRetentionDays ?? DEFAULT_ARCHIVE_RETENTION_DAYS;
+  pruneArchivedHistory(state, retentionDays, options?.now ?? Date.now());
+
+  if (recent.length > 0 || state.recent[AGY] === undefined) {
+    state.recent[AGY] = recent;
+  }
 }

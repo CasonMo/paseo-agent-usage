@@ -176,7 +176,7 @@ export const CARD_CATALOG: Record<CardId, CardMeta> = {
   },
   cost: {
     title: { zh: "成本", en: "Cost" },
-    description: { zh: "有成本上报的 Agent 的成本趋势与效率。", en: "Cost trend and efficiency for agents that report cost." },
+    description: { zh: "成本趋势、缓存节省与效率（上报值优先，未上报按 API 费率估算）。", en: "Cost trend, cache savings and efficiency (reported first, API-equivalent estimate otherwise)." },
     category: "efficiency",
     span: "half",
   },

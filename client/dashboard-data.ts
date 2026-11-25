@@ -42,6 +42,10 @@ function agentFromTotals(totals: UsageTotals, id: string, label: string): UsageA
     reasoning: totals.reasoning,
     totalTokens: totalTokens(totals),
     reportedCostUsd: totals.reportedCostUsd,
+    estimatedCostUsd: totals.estimatedCostUsd,
+    costUsd: totals.costUsd,
+    cacheSavingsUsd: totals.cacheSavingsUsd,
+    unpricedTokens: totals.unpricedTokens,
     credits: totals.credits,
   };
 }
@@ -110,11 +114,11 @@ export function fromAgentReport(report: UsageAgentReport): DashboardData {
   };
 }
 
-export function totalTokens(totals: UsageTotals): number {
+export function totalTokens(totals: Pick<UsageTotals, "input" | "output" | "cacheRead" | "cacheWrite">): number {
   return totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
 }
 
-export function cacheHitRate(totals: UsageTotals): number | null {
+export function cacheHitRate(totals: Pick<UsageTotals, "input" | "cacheRead" | "cacheWrite">): number | null {
   const denominator = totals.input + totals.cacheRead + totals.cacheWrite;
   return denominator > 0 ? totals.cacheRead / denominator : null;
 }

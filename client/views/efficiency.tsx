@@ -5,7 +5,7 @@ import { agentColor, TOKEN_COLORS, COST_COLOR } from "../agents";
 import { totalTokens } from "../dashboard-data";
 import { formatTokens, formatUsd } from "../format";
 import { Empty, MetricSwitch, ScatterPlot, ShareBar, StackedColumns, TrendChart } from "../visuals";
-import { downsampleSeries, hitOf, percentText, pick, pointAverageRequest, pointCacheHit, pointOutputRatio, sum, type CardProps } from "./shared";
+import { costSourceShort, downsampleSeries, hitOf, percentText, pick, pointAverageRequest, pointCacheHit, pointOutputRatio, sum, unpricedSummary, type CardProps } from "./shared";
 
 export function CacheHitCard({ data, theme, locale, compact }: CardProps) {
   const series = useMemo(() => downsampleSeries(data.series, compact ? 30 : 60), [data.series, compact]);
@@ -174,13 +174,21 @@ type CostView = "trend" | "efficiency";
 
 export function CostCard({ data, theme, locale, compact }: CardProps) {
   const [view, setView] = useState<CostView>("trend");
-  const agents = data.agents.filter((agent) => agent.reportedCostUsd > 0);
-  const totalCost = sum(agents.map((agent) => agent.reportedCostUsd));
+  const agents = data.agents.filter((agent) => agent.costUsd > 0);
+  const totalCost = sum(agents.map((agent) => agent.costUsd));
   const series = useMemo(() => downsampleSeries(data.series, compact ? 30 : 60), [data.series, compact]);
-  if (agents.length === 0) return <Empty theme={theme} text={pick(locale, "当前没有 Agent 上报成本。", "No agent reports cost in this range.")} />;
+  const unpricedNote = unpricedSummary(data.totals.unpricedTokens, data.totals.unpricedModels, locale);
+  if (agents.length === 0) {
+    return (
+      <View style={{ gap: 4 }}>
+        <Empty theme={theme} text={pick(locale, "当前范围内暂无已定价的成本数据。", "No priced cost data in this range.")} />
+        {unpricedNote ? <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{unpricedNote}</Text> : null}
+      </View>
+    );
+  }
   return (
     <View style={{ gap: 7 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 4, flexWrap: "wrap" }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         <MetricSwitch
           theme={theme}
           value={view}
@@ -190,7 +198,14 @@ export function CostCard({ data, theme, locale, compact }: CardProps) {
           ]}
           onChange={setView}
         />
-        <Text style={{ fontSize: 11, fontWeight: "700", color: theme.colors.foreground, fontVariant: ["tabular-nums"] }}>{formatUsd(totalCost)}</Text>
+        <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+          {data.totals.cacheSavingsUsd > 0 ? (
+            <Text style={{ fontSize: 10, color: theme.colors.statusSuccess, fontVariant: ["tabular-nums"] }}>
+              {pick(locale, `缓存省 ${formatUsd(data.totals.cacheSavingsUsd)}`, `Saved ${formatUsd(data.totals.cacheSavingsUsd)}`)}
+            </Text>
+          ) : null}
+          <Text style={{ fontSize: 11, fontWeight: "700", color: theme.colors.foreground, fontVariant: ["tabular-nums"] }}>{formatUsd(totalCost)}</Text>
+        </View>
       </View>
       {view === "trend" ? (
         <TrendChart
@@ -206,31 +221,36 @@ export function CostCard({ data, theme, locale, compact }: CardProps) {
         <View style={{ gap: 4 }}>
           <View style={{ flexDirection: "row", paddingBottom: 2 }}>
             <Text style={{ flex: 1, fontSize: 9, color: theme.colors.foregroundMuted }}>{pick(locale, "Agent", "Agent")}</Text>
+            <Text style={{ width: 34, textAlign: "right", fontSize: 9, color: theme.colors.foregroundMuted }}>{pick(locale, "口径", "Src")}</Text>
             <Text style={{ width: 54, textAlign: "right", fontSize: 9, color: theme.colors.foregroundMuted }}>{pick(locale, "成本", "Cost")}</Text>
-            <Text style={{ width: 58, textAlign: "right", fontSize: 9, color: theme.colors.foregroundMuted }}>{pick(locale, "$/1M", "$/1M")}</Text>
-            <Text style={{ width: 52, textAlign: "right", fontSize: 9, color: theme.colors.foregroundMuted }}>{pick(locale, "$/次", "$/req")}</Text>
+            <Text style={{ width: 54, textAlign: "right", fontSize: 9, color: theme.colors.foregroundMuted }}>{pick(locale, "$/1M", "$/1M")}</Text>
+            <Text style={{ width: 50, textAlign: "right", fontSize: 9, color: theme.colors.foregroundMuted }}>{pick(locale, "$/次", "$/req")}</Text>
           </View>
           {agents
             .slice()
-            .sort((a, b) => b.reportedCostUsd - a.reportedCostUsd)
+            .sort((a, b) => b.costUsd - a.costUsd)
             .map((agent) => {
-              const perM = agent.totalTokens > 0 ? agent.reportedCostUsd / (agent.totalTokens / 1_000_000) : 0;
-              const perRequest = agent.requests > 0 ? agent.reportedCostUsd / agent.requests : 0;
+              const perM = agent.totalTokens > 0 ? agent.costUsd / (agent.totalTokens / 1_000_000) : 0;
+              const perRequest = agent.requests > 0 ? agent.costUsd / agent.requests : 0;
               return (
                 <View key={agent.id} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 5, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
                   <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 5 }}>
                     <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: agentColor(agent.id) }} />
-                    <Text style={{ fontSize: 11, color: theme.colors.foreground }}>{agent.label}</Text>
+                    <Text numberOfLines={1} style={{ fontSize: 11, color: theme.colors.foreground }}>{agent.label}</Text>
                   </View>
-                  <Text style={{ width: 54, textAlign: "right", fontSize: 11, color: theme.colors.foreground, fontVariant: ["tabular-nums"] }}>{formatUsd(agent.reportedCostUsd)}</Text>
-                  <Text style={{ width: 58, textAlign: "right", fontSize: 11, color: theme.colors.foregroundMuted, fontVariant: ["tabular-nums"] }}>{perM > 0 ? `$${perM.toFixed(2)}` : "—"}</Text>
-                  <Text style={{ width: 52, textAlign: "right", fontSize: 11, color: theme.colors.foregroundMuted, fontVariant: ["tabular-nums"] }}>{perRequest > 0 ? `$${perRequest.toFixed(3)}` : "—"}</Text>
+                  <Text style={{ width: 34, textAlign: "right", fontSize: 9, color: theme.colors.foregroundMuted }}>{costSourceShort(agent.reportedCostUsd, agent.estimatedCostUsd, locale)}</Text>
+                  <Text style={{ width: 54, textAlign: "right", fontSize: 11, color: theme.colors.foreground, fontVariant: ["tabular-nums"] }}>{formatUsd(agent.costUsd)}</Text>
+                  <Text style={{ width: 54, textAlign: "right", fontSize: 11, color: theme.colors.foregroundMuted, fontVariant: ["tabular-nums"] }}>{perM > 0 ? `$${perM.toFixed(2)}` : "—"}</Text>
+                  <Text style={{ width: 50, textAlign: "right", fontSize: 11, color: theme.colors.foregroundMuted, fontVariant: ["tabular-nums"] }}>{perRequest > 0 ? `$${perRequest.toFixed(3)}` : "—"}</Text>
                 </View>
               );
             })}
         </View>
       )}
-      <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "只统计有成本上报的 Agent；$/1M 是每百万 Token 成本。", "Only agents that report cost; $/1M is cost per million tokens.")}</Text>
+      <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>
+        {pick(locale, "日志上报值优先，未上报模型按 API 费率表估算；$/1M 为每百万 Token 成本。", "Reported costs take precedence; unbilled models use API-equivalent rates. $/1M is cost per million tokens.")}
+      </Text>
+      {unpricedNote ? <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{unpricedNote}</Text> : null}
     </View>
   );
 }
@@ -240,7 +260,7 @@ type CumulativeMetric = "tokens" | "cost";
 export function CumulativeCard({ data, theme, locale, compact }: CardProps) {
   const [metric, setMetric] = useState<CumulativeMetric>("tokens");
   const series = useMemo(() => downsampleSeries(data.series, compact ? 24 : 48), [data.series, compact]);
-  const agents = data.agents.filter((agent) => (metric === "tokens" ? agent.totalTokens > 0 : agent.reportedCostUsd > 0));
+  const agents = data.agents.filter((agent) => (metric === "tokens" ? agent.totalTokens > 0 : agent.costUsd > 0));
   const running = new Map<string, number>();
   const points = series.map((point) => {
     const parts = agents.map((agent) => {
@@ -253,8 +273,8 @@ export function CumulativeCard({ data, theme, locale, compact }: CardProps) {
   });
   const final = points[points.length - 1]?.parts.reduce((total, value) => total + value, 0) ?? 0;
   return (
-    <View style={{ gap: 7 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 4, flexWrap: "wrap" }}>
+    <View style={{ gap: 10 }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 6, flexWrap: "wrap", paddingBottom: 2 }}>
         <MetricSwitch
           theme={theme}
           value={metric}
@@ -267,18 +287,20 @@ export function CumulativeCard({ data, theme, locale, compact }: CardProps) {
         <Text style={{ fontSize: 11, fontWeight: "700", color: theme.colors.foreground, fontVariant: ["tabular-nums"] }}>{metric === "tokens" ? formatTokens(final) : formatUsd(final)}</Text>
       </View>
       {agents.length === 0 ? (
-        <Empty theme={theme} text={pick(locale, "当前范围没有可累计的成本上报。", "No reported cost to accumulate in this range.")} />
+        <Empty theme={theme} text={pick(locale, "当前范围没有可累计的已定价成本。", "No priced cost to accumulate in this range.")} />
       ) : (
-        <StackedColumns
-          theme={theme}
-          points={points}
-          colors={agents.map((agent) => agentColor(agent.id))}
-          names={agents.map((agent) => agent.label)}
-          format={metric === "tokens" ? formatTokens : formatUsd}
-          compact={compact}
-        />
+        <View style={{ paddingTop: 8 }}>
+          <StackedColumns
+            theme={theme}
+            points={points}
+            colors={agents.map((agent) => agentColor(agent.id))}
+            names={agents.map((agent) => agent.label)}
+            format={metric === "tokens" ? formatTokens : formatUsd}
+            compact={compact}
+          />
+        </View>
       )}
-      <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "累计曲线按 Agent 分层；成本只统计有上报的 Agent。", "Cumulative curve split by agent; cost only for reporting agents.")}</Text>
+      <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "累计曲线按 Agent 分层；成本包含日志上报与 API 估算。", "Cumulative curve split by agent; cost includes reported and API-estimated amounts.")}</Text>
     </View>
   );
 }

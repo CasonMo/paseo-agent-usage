@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { addBucket, applySession, recordCall, type CodexForkState, type FileState, type ScanState } from "./state";
+import { recordCall, recordFileBucket, recordFileSession, type CodexForkState, type FileState, type ScanState, type SessionEntry, type UsageBucket } from "./state";
 import { clipTitle, firstMessageText, forEachNewLine, localHourKey, num, MACHINE_LABEL } from "./util";
 
 export const CODEX = "codex";
@@ -23,6 +23,8 @@ const BURST_WINDOW_MS = 2000;
 
 export async function scanCodexFile(state: ScanState, path: string): Promise<void> {
   const previousState = state.files[path];
+  const fileBuckets: Record<string, UsageBucket> = previousState?.buckets ? { ...previousState.buckets } : {};
+  const fileSessions: Record<string, SessionEntry> = previousState?.sessions ? { ...previousState.sessions } : {};
   let project = previousState?.project ?? "";
   let model = previousState?.model ?? "";
   let session = previousState?.session ?? "";
@@ -123,7 +125,8 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
           const lOutput = num(last.output_tokens);
           if (lInput + lCached + lOutput > 0) {
             const input = Math.max(0, lInput - lCached);
-            addBucket(state.buckets, localHourKey(ts), CODEX, model || "codex", project, {
+            const activeModel = model || "codex";
+            recordFileBucket(state, fileBuckets, localHourKey(ts), CODEX, activeModel, project, {
               r: 1,
               i: input,
               o: lOutput,
@@ -131,10 +134,11 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
               cw: num(last.cache_write_input_tokens),
               rz: num(last.reasoning_output_tokens),
             });
-            applySession(state.sessions, CODEX, session, {
+            recordFileSession(state, fileSessions, CODEX, session, {
               t: ts,
               r: 1,
               p: project,
+              model: activeModel,
               title: title || undefined,
               i: input,
               o: lOutput,
@@ -144,7 +148,7 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
             });
             recordCall(state, CODEX, {
               t: ts,
-              m: model || "codex",
+              m: activeModel,
               p: project,
               s: session,
               i: input,
@@ -154,6 +158,7 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
               rz: num(last.reasoning_output_tokens),
               cost: 0,
               credits: 0,
+              f: path,
             });
           }
         }
@@ -187,7 +192,8 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
     if (dTotal <= 0) return;
     if (!Number.isFinite(ts)) return;
     const input = Math.max(0, dInput - dCached);
-    addBucket(state.buckets, localHourKey(ts), CODEX, model || "codex", project, {
+    const activeModel = model || "codex";
+    recordFileBucket(state, fileBuckets, localHourKey(ts), CODEX, activeModel, project, {
       r: 1,
       i: input,
       o: dOutput,
@@ -195,10 +201,11 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
       cw: dCacheWrite,
       rz: dReasoning,
     });
-    applySession(state.sessions, CODEX, session, {
+    recordFileSession(state, fileSessions, CODEX, session, {
       t: ts,
       r: 1,
       p: project,
+      model: activeModel,
       title: title || undefined,
       i: input,
       o: dOutput,
@@ -208,7 +215,7 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
     });
     recordCall(state, CODEX, {
       t: ts,
-      m: model || "codex",
+      m: activeModel,
       p: project,
       s: session,
       i: input,
@@ -218,12 +225,17 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
       rz: dReasoning,
       cost: 0,
       credits: 0,
+      f: path,
     });
   });
   if (!result) return;
+  const ledgerFrom0 = !previousState || previousState.offset === 0 || Boolean(previousState.ledgerFrom0);
   const fileState: FileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, model, session };
+  if (ledgerFrom0) fileState.ledgerFrom0 = true;
   if (title) fileState.sessionTitle = title;
   if (totals) fileState.totals = totals;
   if (fork.forked) fileState.codexFork = fork;
+  if (Object.keys(fileBuckets).length > 0) fileState.buckets = fileBuckets;
+  if (Object.keys(fileSessions).length > 0) fileState.sessions = fileSessions;
   state.files[path] = fileState;
 }

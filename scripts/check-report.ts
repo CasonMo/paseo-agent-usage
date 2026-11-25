@@ -34,6 +34,7 @@ const state: ScanState = {
   buckets,
   sessions: {
     "codex\u0001s-current": { s: sessionStart, e: sessionStart + 30 * 60_000, r: 2, i: 100, o: 50, cr: 400, cw: 10, rz: 0, cost: 0.2, credits: 0, p: "project-a", title: "Current session" },
+    "claude\u0001s-legacy": { s: sessionStart + 1000, e: sessionStart + 10_000, r: 1, i: 500, o: 100, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0, p: "project-a", title: "Legacy session" },
     "claude\u0001s-previous": { s: previousStart, e: previousStart + 20 * 60_000, r: 1, i: 80, o: 20, cr: 200, cw: 0, rz: 0, cost: 0.1, credits: 0, p: "project-b", title: "Previous session" },
   },
   files: {},
@@ -57,9 +58,12 @@ assert.equal(new Date(`${report.calendar.start}T00:00:00.000Z`).getUTCDay(), 1, 
 assert.equal(report.hourOfWeek.tokens.length, 168);
 assert.equal(report.hourOfDay.tokens.length, 24);
 assert.equal(report.weekday.tokens.length, 7);
-assert.equal(report.sessionStats.count, 1);
-assert.equal(report.sessionStats.scatter.length, 1);
-assert.equal(report.sessionStats.top[0]?.title, "Current session");
+assert.equal(report.sessionStats.count, 2);
+assert.equal(report.sessionStats.unpricedCount, 1, "legacy session without models should be marked unpriced");
+assert.equal(report.sessionStats.scatter.length, 2);
+assert.equal(report.sessionStats.top.find((item) => item.id === "s-current")?.costSource, "reported");
+assert.equal(report.sessionStats.top.find((item) => item.id === "s-legacy")?.costSource, "unpriced");
+assert.equal(report.sessionStats.top.find((item) => item.id === "s-current")?.title, "Current session");
 assert.equal(report.requestStats.sampled, 1);
 assert.equal(report.pairs.agentModels.rows[0], "codex");
 assert.equal(report.pairs.agentHours.cols.length, 24);

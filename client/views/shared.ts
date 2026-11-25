@@ -67,6 +67,7 @@ export function downsampleSeries(series: readonly UsageSeriesPoint[], limit: num
       reasoning: sum(group.map((point) => point.reasoning)),
       credits: sum(group.map((point) => point.credits)),
       costUsd: sum(group.map((point) => point.costUsd)),
+      cacheSavingsUsd: sum(group.map((point) => point.cacheSavingsUsd)),
       byAgent,
       byAgentRequests,
       byAgentCostUsd,
@@ -112,6 +113,7 @@ export function forecastSeries(series: readonly UsageSeriesPoint[], days = 7): U
       reasoning: average((point) => point.reasoning),
       credits: average((point) => point.credits),
       costUsd: average((point) => point.costUsd),
+      cacheSavingsUsd: average((point) => point.cacheSavingsUsd),
       byAgent: {},
       byAgentRequests: {},
       byAgentCostUsd: {},
@@ -139,8 +141,34 @@ export function pointReasoningShare(point: UsageSeriesPoint): number {
 }
 
 export function sortAgents(agents: readonly UsageAgent[], metric: "tokens" | "requests" | "cost"): UsageAgent[] {
-  const value = (agent: UsageAgent) => (metric === "tokens" ? agent.totalTokens : metric === "requests" ? agent.requests : agent.reportedCostUsd);
+  const value = (agent: UsageAgent) => (metric === "tokens" ? agent.totalTokens : metric === "requests" ? agent.requests : agent.costUsd);
   return [...agents].filter((agent) => value(agent) > 0).sort((a, b) => value(b) - value(a));
+}
+
+export function costSourceLabel(reportedUsd: number, estimatedUsd: number, locale: Locale): string {
+  if (reportedUsd > 0 && estimatedUsd > 0) return pick(locale, "上报 + 估算", "Reported + Est.");
+  if (reportedUsd > 0) return pick(locale, "日志上报", "Reported");
+  if (estimatedUsd > 0) return pick(locale, "API 估算", "API Est.");
+  return "";
+}
+
+export function costSourceShort(reportedUsd: number, estimatedUsd: number, locale: Locale): string {
+  if (reportedUsd > 0 && estimatedUsd > 0) return pick(locale, "混合", "Mix");
+  if (reportedUsd > 0) return pick(locale, "上报", "Rep");
+  if (estimatedUsd > 0) return pick(locale, "估算", "Est");
+  return "—";
+}
+
+export function unpricedSummary(unpricedTokens: number, unpricedModels: readonly string[], locale: Locale): string | null {
+  if (unpricedTokens <= 0) return null;
+  const shown = unpricedModels.slice(0, 3).join(", ");
+  const extra = unpricedModels.length > 3 ? ` +${unpricedModels.length - 3}` : "";
+  const list = shown ? `${shown}${extra}` : pick(locale, "未知模型", "unknown");
+  return pick(
+    locale,
+    `未定价 ${formatTokens(unpricedTokens)} tok（${list}），可在「配置 → 模型定价」自定义单价。`,
+    `${formatTokens(unpricedTokens)} unpriced tok (${list}); add custom rates in Settings → Model pricing.`,
+  );
 }
 
 export function originStatus(locale: Locale, status: UsageOrigin["status"]): string {

@@ -4,7 +4,20 @@ import { join } from "node:path";
 import { setImmediate } from "node:timers";
 import { fileURLToPath } from "node:url";
 import { loadSqlite } from "./opencode";
-import { addBucket, applySession, emptyState, MAX_RECENT_PER_AGENT, type CallRecord, type ScanState } from "./state";
+import {
+  addBucket,
+  applySession,
+  DEFAULT_ARCHIVE_RETENTION_DAYS,
+  MAX_RECENT_PER_AGENT,
+  mergeBuckets,
+  mergeSessionEntry,
+  pruneArchivedHistory,
+  type AgyConversationArchive,
+  type CallRecord,
+  type ScanState,
+  type SessionEntry,
+  type UsageBucket,
+} from "./state";
 import { localHourKey } from "./util";
 
 export const AGY = "agy";
@@ -178,6 +191,7 @@ export async function scanAgy(
   state: ScanState,
   shouldStop: () => boolean,
   root = join(homedir(), ".gemini", "antigravity-cli"),
+  options?: { archiveRetentionDays?: number; now?: number },
 ): Promise<void> {
   const directory = join(root, "conversations");
   const entries = await readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
@@ -196,7 +210,8 @@ export async function scanAgy(
   }
 
   const projects = readProjects(sqlite, root);
-  const next = emptyState();
+  const freshBySid = new Map<string, AgyConversationArchive>();
+  const seenOnDisk = new Set<string>();
   const replayed = new Set<string>();
   let recent: CallRecord[] = [];
   let read = 0;
@@ -219,12 +234,17 @@ export async function scanAgy(
       continue;
     }
     read += 1;
-    for (const call of calls) {
-      const delta = { ...call, r: 1 };
-      addBucket(next.buckets, localHourKey(call.t), AGY, call.m, project, delta);
-      applySession(next.sessions, AGY, sid, delta);
-    }
+    seenOnDisk.add(sid);
     if (calls.length) {
+      const convBuckets: Record<string, UsageBucket> = {};
+      const convSessions: Record<string, SessionEntry> = {};
+      for (const call of calls) {
+        const delta = { ...call, r: 1, model: call.m };
+        addBucket(convBuckets, localHourKey(call.t), AGY, call.m, project, delta);
+        applySession(convSessions, AGY, sid, delta);
+      }
+      const session = convSessions[`${AGY}\u0001${sid}`];
+      freshBySid.set(sid, session ? { buckets: convBuckets, session } : { buckets: convBuckets });
       recent = recent.concat(calls).sort((a, b) => a.t - b.t).slice(-MAX_RECENT_PER_AGENT);
     }
   }
@@ -234,15 +254,34 @@ export async function scanAgy(
     if (!read) return;
   }
 
-  // Replace agy's projection only after a complete read. SQLite rows can be
-  // rewritten by agy, so appending them to the last projection would double-count.
+  // Merge on-disk conversations with previously archived (vanished) conversations.
+  // Present DBs replace their own prior projection so SQLite rewrites never double-count,
+  // while deleted DBs survive in `state.agy` up to `archiveRetentionDays`.
+  const nextAgy: Record<string, AgyConversationArchive> = {};
+  for (const [sid, archived] of Object.entries(state.agy ?? {})) {
+    if (!seenOnDisk.has(sid)) nextAgy[sid] = { ...archived, archived: true };
+  }
+  for (const [sid, fresh] of freshBySid) {
+    nextAgy[sid] = fresh;
+  }
+
   for (const key of Object.keys(state.buckets)) {
     if (key.split("\u0001", 2)[1] === AGY) delete state.buckets[key];
   }
   for (const key of Object.keys(state.sessions)) {
     if (key.startsWith(AGY + "\u0001")) delete state.sessions[key];
   }
-  Object.assign(state.buckets, next.buckets);
-  Object.assign(state.sessions, next.sessions);
-  state.recent[AGY] = recent;
+  for (const [sid, conv] of Object.entries(nextAgy)) {
+    mergeBuckets(state.buckets, conv.buckets, 1);
+    if (conv.session) mergeSessionEntry(state.sessions, `${AGY}\u0001${sid}`, conv.session, 1);
+  }
+  if (Object.keys(nextAgy).length > 0) state.agy = nextAgy;
+  else delete state.agy;
+
+  const retentionDays = options?.archiveRetentionDays ?? DEFAULT_ARCHIVE_RETENTION_DAYS;
+  pruneArchivedHistory(state, retentionDays, options?.now ?? Date.now());
+
+  if (recent.length > 0 || state.recent[AGY] === undefined) {
+    state.recent[AGY] = recent;
+  }
 }

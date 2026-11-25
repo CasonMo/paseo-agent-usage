@@ -30,7 +30,9 @@
     "check:report": "tsx scripts/check-report.ts",
     "check:agy": "tsx scripts/check-agy.ts",
     "check:codebuddy": "tsx scripts/check-codebuddy.ts",
-    "check": "npm run typecheck && npm run check:dashboard && npm run check:report && npm run check:prefs && npm run check:opencode && npm run check:agy && npm run check:codebuddy"
+    "check:archive": "tsx scripts/check-archive.ts",
+    "check:pricing": "tsx scripts/check-pricing.ts",
+    "check": "npm run typecheck && npm run check:dashboard && npm run check:report && npm run check:prefs && npm run check:opencode && npm run check:agy && npm run check:codebuddy && npm run check:archive && npm run check:pricing"
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.13.0-beta.1",

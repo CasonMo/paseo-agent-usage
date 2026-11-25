@@ -23,7 +23,7 @@ export function AgentRadarCard({ data, theme, locale, compact }: CardProps) {
     if (index === 2) return agent.input + agent.cacheRead + agent.cacheWrite > 0 ? agent.cacheRead / (agent.input + agent.cacheRead + agent.cacheWrite) : 0;
     if (index === 3) return total > 0 ? agent.output / total : 0;
     if (index === 4) return total > 0 ? agent.reasoning / total : 0;
-    return agent.reportedCostUsd;
+    return agent.costUsd;
   };
   const maxima = axes.map((_, index) => Math.max(...agents.map((agent) => metric(agent, index))));
   const series = agents.map((agent) => ({
@@ -54,8 +54,8 @@ export function AgentRadarCard({ data, theme, locale, compact }: CardProps) {
 }
 
 export function BudgetCard({ data, theme, locale, compact, budgetUsd = 0 }: CardProps) {
-  const costAgents = data.agents.filter((agent) => agent.reportedCostUsd > 0);
-  if (costAgents.length === 0) return <Empty theme={theme} text={pick(locale, "当前没有 Agent 上报成本，无法计算预算。", "No agent reports cost, so budget cannot be computed.")} />;
+  const hasCost = data.monthToDate.costUsd > 0 || data.agents.some((agent) => agent.costUsd > 0);
+  if (!hasCost) return <Empty theme={theme} text={pick(locale, "当前没有已定价成本，无法计算预算。", "No priced cost available to compute budget.")} />;
   if (!Number.isFinite(budgetUsd) || budgetUsd <= 0) {
     return (
       <View style={{ gap: 6 }}>
@@ -80,7 +80,15 @@ export function BudgetCard({ data, theme, locale, compact, budgetUsd = 0 }: Card
     <View style={{ gap: 8 }}>
       <LedgerStrip theme={theme} cells={cells} compact={compact} locale={locale} />
       <BudgetBar theme={theme} ratio={ratio} color={COST_COLOR} />
-      <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "按本月至今的成本线性外推；只统计有成本上报的 Agent。", "Linearly projected from month-to-date cost; only agents that report cost.")}</Text>
+      <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>
+        {data.monthToDate.cacheSavingsUsd > 0
+          ? pick(
+              locale,
+              `按本月至今成本（上报 + API 估算）线性外推；本月缓存节省 ${formatUsd(data.monthToDate.cacheSavingsUsd)}。`,
+              `Linearly projected from month-to-date cost (reported + API estimate); cache saved ${formatUsd(data.monthToDate.cacheSavingsUsd)} this month.`,
+            )
+          : pick(locale, "按本月至今的成本（上报 + API 估算）线性外推。", "Linearly projected from month-to-date cost (reported + API estimate).")}
+      </Text>
     </View>
   );
 }

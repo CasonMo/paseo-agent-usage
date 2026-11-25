@@ -6,6 +6,7 @@ import { activeDays, totalTokens } from "../dashboard-data";
 import { formatCount, formatTokens, formatUsd } from "../format";
 import { Delta, Dial, Empty, LedgerStrip, MetricSwitch, RankedRows, ShareBar, StackedColumns, TrendChart, type LedgerCell } from "../visuals";
 import {
+  costSourceLabel,
   downsampleSeries,
   forecastSeries,
   hitOf,
@@ -17,6 +18,7 @@ import {
   seriesWindowLabel,
   sortAgents,
   sum,
+  unpricedSummary,
   type CardProps,
 } from "./shared";
 
@@ -61,9 +63,16 @@ export function PulseCard({ data, theme, compact, locale }: CardProps) {
     {
       key: "cost",
       label: pick(locale, "成本", "Cost"),
-      value: totals.reportedCostUsd > 0 ? formatUsd(totals.reportedCostUsd) : "—",
-      sub: totals.reportedCostUsd > 0 ? pick(locale, "仅统计有上报的 Agent", "Reported agents only") : pick(locale, "当前没有成本上报", "No reported cost"),
-      delta: { current: totals.reportedCostUsd, previous: previous.reportedCostUsd },
+      value: totals.costUsd > 0 ? formatUsd(totals.costUsd) : "—",
+      sub:
+        totals.costUsd > 0
+          ? totals.cacheSavingsUsd > 0
+            ? `${costSourceLabel(totals.reportedCostUsd, totals.estimatedCostUsd, locale)} · ${pick(locale, `省 ${formatUsd(totals.cacheSavingsUsd)}`, `Saved ${formatUsd(totals.cacheSavingsUsd)}`)}`
+            : costSourceLabel(totals.reportedCostUsd, totals.estimatedCostUsd, locale)
+          : totals.unpricedTokens > 0
+            ? pick(locale, "含未定价模型", "Unpriced models")
+            : pick(locale, "暂无成本数据", "No cost data"),
+      delta: { current: totals.costUsd, previous: previous.costUsd, invert: true },
       spark: { values: spark.map((point) => point.costUsd), color: COST_COLOR },
     },
     {
@@ -73,16 +82,18 @@ export function PulseCard({ data, theme, compact, locale }: CardProps) {
       sub: data.firstDay ? pick(locale, `自 ${data.firstDay}`, `Since ${data.firstDay}`) : pick(locale, "暂无历史", "No history yet"),
     },
   ];
+  const unpricedNote = unpricedSummary(totals.unpricedTokens, totals.unpricedModels, locale);
   return (
     <View style={{ gap: 8 }}>
       <LedgerStrip theme={theme} cells={cells} compact={compact} locale={locale} />
       <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>
         {pick(
           locale,
-          "成本只统计有上报的 Agent；缓存命中 = 缓存读 /（新输入 + 缓存读 + 缓存写）。",
-          "Cost covers agents that report it; cache hit = cache read / (new input + cache read + cache write).",
+          "成本优先采用日志上报值，未上报模型按 API 费率表估算；缓存命中 = 缓存读 /（新输入 + 缓存读 + 缓存写）。",
+          "Cost uses reported amounts first and estimates unbilled models from API rates; cache hit = cache read / (new input + cache read + cache write).",
         )}
       </Text>
+      {unpricedNote ? <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{unpricedNote}</Text> : null}
     </View>
   );
 }
@@ -119,7 +130,7 @@ export function TrendCard({ data, theme, compact, locale }: CardProps) {
       : metric === "output"
       ? pick(locale, "只显示输出 Token；缓存读不包含在内。", "Output tokens only; cache reads are excluded.")
       : metric === "cost"
-      ? pick(locale, "成本仅统计有上报的 Agent。", "Cost only covers agents that report it.")
+      ? pick(locale, "成本优先采用日志上报值，未上报模型按 API 费率表估算。", "Cost uses reported values first and API-equivalent estimates for unbilled models.")
       : metric === "forecast"
         ? forecast.length > 0
           ? pick(locale, "预测使用最近 28 天的周内均值，仅作趋势参考。", "Forecast uses the last 28 days of weekday averages, for direction only.")
@@ -191,7 +202,8 @@ export function TrendCard({ data, theme, compact, locale }: CardProps) {
 export function PeriodCompareCard({ data, theme, locale }: CardProps) {
   const current = data.totals;
   const previous = data.previousTotals;
-  const hasCost = data.agents.some((agent) => agent.reportedCostUsd > 0);
+  const hasCost = current.costUsd > 0 || previous.costUsd > 0;
+  const hasSavings = current.cacheSavingsUsd > 0 || previous.cacheSavingsUsd > 0;
   const hit = hitOf(current);
   const previousHit = hitOf(previous);
   const rows: Array<{ key: string; label: string; current: string; previous: string; currentValue: number; previousValue: number; invert?: boolean }> = [
@@ -254,12 +266,24 @@ export function PeriodCompareCard({ data, theme, locale }: CardProps) {
     {
       key: "cost",
       label: pick(locale, "成本", "Cost"),
-      current: hasCost ? formatUsd(current.reportedCostUsd) : "—",
-      previous: hasCost ? formatUsd(previous.reportedCostUsd) : "—",
-      currentValue: hasCost ? current.reportedCostUsd : 0,
-      previousValue: hasCost ? previous.reportedCostUsd : 0,
+      current: hasCost ? formatUsd(current.costUsd) : "—",
+      previous: hasCost ? formatUsd(previous.costUsd) : "—",
+      currentValue: hasCost ? current.costUsd : 0,
+      previousValue: hasCost ? previous.costUsd : 0,
       invert: true,
     },
+    ...(hasSavings
+      ? [
+          {
+            key: "cacheSavings",
+            label: pick(locale, "缓存节省", "Cache saved"),
+            current: formatUsd(current.cacheSavingsUsd),
+            previous: formatUsd(previous.cacheSavingsUsd),
+            currentValue: current.cacheSavingsUsd,
+            previousValue: previous.cacheSavingsUsd,
+          },
+        ]
+      : []),
   ];
   return (
     <View style={{ gap: 6 }}>
@@ -280,7 +304,7 @@ export function PeriodCompareCard({ data, theme, locale }: CardProps) {
         </View>
       ))}
       <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "上期为等长且紧邻的上一段时间。", "Previous period is the equally long window immediately before.")}</Text>
-      {!hasCost ? <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "成本：当前没有 Agent 上报。", "Cost: no agent reports it in this range.")}</Text> : null}
+      {!hasCost ? <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "成本：当前范围内暂无已定价用量。", "Cost: no priced usage in this range.")}</Text> : null}
     </View>
   );
 }
@@ -339,13 +363,13 @@ type ShareMetric = "tokens" | "requests" | "cost";
 export function AgentShareCard({ data, theme, locale }: CardProps) {
   const [metric, setMetric] = useState<ShareMetric>("tokens");
   const agents = sortAgents(data.agents, metric);
-  const total = sum(agents.map((agent) => (metric === "tokens" ? agent.totalTokens : metric === "requests" ? agent.requests : agent.reportedCostUsd)));
-  const segments = agents.map((agent) => ({ key: agent.id, value: metric === "tokens" ? agent.totalTokens : metric === "requests" ? agent.requests : agent.reportedCostUsd, color: agentColor(agent.id) }));
+  const total = sum(agents.map((agent) => (metric === "tokens" ? agent.totalTokens : metric === "requests" ? agent.requests : agent.costUsd)));
+  const segments = agents.map((agent) => ({ key: agent.id, value: metric === "tokens" ? agent.totalTokens : metric === "requests" ? agent.requests : agent.costUsd, color: agentColor(agent.id) }));
   const rows = agents.map((agent) => ({
     key: agent.id,
     label: agent.label,
     sub: `${formatTokens(agent.totalTokens)} tok · ${formatCount(agent.requests)} ${pick(locale, "次", "req")}`,
-    value: metric === "tokens" ? agent.totalTokens : metric === "requests" ? agent.requests : agent.reportedCostUsd,
+    value: metric === "tokens" ? agent.totalTokens : metric === "requests" ? agent.requests : agent.costUsd,
     color: agentColor(agent.id),
   }));
   return (
@@ -383,7 +407,7 @@ export function AgentShareCard({ data, theme, locale }: CardProps) {
               <RankedRows theme={theme} rows={rows} format={(value) => (metric === "cost" ? formatUsd(value) : metric === "requests" ? formatCount(value) : formatTokens(value))} limit={4} emptyText="" locale={locale} />
             </View>
           </View>
-          {metric === "cost" ? <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "成本只统计有上报的 Agent。", "Cost only covers agents that report it.")}</Text> : null}
+          {metric === "cost" ? <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>{pick(locale, "成本优先采用日志上报值，其余按 API 费率表估算。", "Cost uses reported values first and API-equivalent estimates for unbilled models.")}</Text> : null}
         </>
       )}
     </View>

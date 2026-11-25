@@ -16,7 +16,8 @@ Paseo plugin: token usage statistics for coding agents, computed from their loca
 - Compare: agent radar, monthly budget burn with month-end projection, data coverage and host sync state
 - Antigravity CLI (agy) counts recorded model calls from its local conversation databases. Select **Antigravity (agy)** for request and Token history. This source requires Node 22.5+ and does not supply billing amounts.
 - Codebuddy Code counts each request from its local session logs under `~/.codebuddy/projects` (including `subagents/`). Cache-read tokens are split out of the input so they are not double counted; the logs carry no cost field, so cost is shown as 0.
-- Cost cards only count agents that report cost (Claude/Codex/Codebuddy may report zero); the optional monthly budget is set in Settings → General
+- Cost estimation & custom pricing: raw log-reported costs remain authoritative; agents whose logs omit billing amounts (Claude Code, Codex, Antigravity, Codebuddy) receive API-equivalent cost estimates and prompt-cache savings from a built-in rate table, with explicit unpriced-model attribution (never silently zeroed) and custom per-model price overrides or aliases in Settings → Model pricing; the optional monthly budget is set in Settings → General
+- Purge-proof archive retention: scanned history from deleted or auto-purged session logs (such as Claude Code's 30-day cleanup or removed Antigravity conversation DBs) survives subsequent rescans and unrelated active-file shrinks, up to a configurable retention window (default 92 days, or Unlimited) in Settings → General
 - OpenCode: supports both 1.x (`session`/`message`) and 2.x (`session_v2`/`session_message`) SQLite stores, detects the layout automatically and deduplicates migrated messages by id
 - Device selector (aggregate / local / each remote), agent selector (overview + Claude Code / Codex / OpenCode / Pi / Antigravity (agy) / Codebuddy Code), ranges (last 24 hours / today / 7 days / 30 days / 12 weeks / 12 months / custom), and an independent trend granularity (hour / day / week / month)
 - Sessions are grouped by session ID; one agent shows the latest 200 sessions, the request log keeps about 400 calls per agent and reports up to 120; both paginate 20 rows
@@ -58,7 +59,8 @@ Paseo 插件：基于各编码 Agent 本地会话日志统计 token 用量，支
 - 对比：Agent 雷达、月度预算燃烧率与月末预测、数据覆盖与主机同步状态
 - Antigravity CLI（agy）从本地会话数据库采集模型调用。在 Agent 选择器中选 **Antigravity (agy)** 即可查看请求和 Token 历史。采集需 Node 22.5+，数据源未提供账单金额。
 - Codebuddy Code 从本地 `~/.codebuddy/projects`（含 `subagents/`）会话日志按次采集。输入中的缓存读取部分单独拆出，避免重复计数；日志无成本字段，成本显示为 0。
-- 成本卡只统计有上报的 Agent（Claude/Codex/Codebuddy 可能为 0）；可选月度预算在「配置 → 通用」中设置
+- 成本估算与自定义定价：日志已上报的成本保持原值；未上报账单金额的 Agent（Claude Code、Codex、Antigravity、Codebuddy）按内置 API 费率表估算成本与缓存节省，未定价模型会显式标注而非静默归零，并可在「配置 → 模型定价」自定义单价或别名映射；可选月度预算在「配置 → 通用」中设置
+- 防清理归档保留：已扫描的历史会话日志在源端删除或自动清理（如 Claude Code 30 天清理或删除 Antigravity 会话库）后，仍会在后续重扫及单文件缩容中保留，保留天数可在「配置 → 通用」配置（默认 92 天，可设永久保留）
 - OpenCode：同时支持 1.x（`session`/`message`）与 2.x（`session_v2`/`session_message`）数据库，自动识别结构，并按消息 ID 对迁移前后的记录去重
 - 设备选择器（聚合 / 本机 / 各远端）、Agent 选择器（总览 + Claude Code / Codex / OpenCode / Pi / Antigravity (agy) / Codebuddy Code）、时间范围（近 24 小时 / 今日 / 近 7 天 / 近 30 天 / 近 12 周 / 近 12 月 / 自定义）、独立的趋势粒度（小时 / 日 / 周 / 月）
 - 会话按会话 ID 聚合；单个 Agent 展示最近 200 个会话，请求日志底层每个 Agent 保留约 400 条、报告最多展示 120 条；两者每页 20 条

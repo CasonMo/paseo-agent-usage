@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { addBucket, applySession, recordCall, type ScanState } from "./state";
+import { recordCall, recordFileBucket, recordFileSession, type FileState, type ScanState, type SessionEntry, type UsageBucket } from "./state";
 import { clipTitle, firstMessageText, forEachNewLine, localHourKey, MACHINE_LABEL, num } from "./util";
 
 export const PI = "pi";
@@ -29,6 +29,8 @@ export function piRoots(env: NodeJS.ProcessEnv = process.env): string[] {
 
 export async function scanPiFile(state: ScanState, path: string): Promise<void> {
   const previousState = state.files[path];
+  const fileBuckets: Record<string, UsageBucket> = previousState?.buckets ? { ...previousState.buckets } : {};
+  const fileSessions: Record<string, SessionEntry> = previousState?.sessions ? { ...previousState.sessions } : {};
   let project = previousState?.project ?? "";
   let title = previousState?.sessionTitle ?? "";
   const base = path.split("/").pop() ?? "";
@@ -90,7 +92,7 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
     const cacheRead = num(usage.cacheRead);
     const cacheWrite = num(usage.cacheWrite);
     const reasoning = num(usage.reasoning);
-    addBucket(state.buckets, localHourKey(ts), PI, model, project, {
+    recordFileBucket(state, fileBuckets, localHourKey(ts), PI, model, project, {
       r: 1,
       i: input,
       o: output,
@@ -99,10 +101,11 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
       rz: reasoning,
       cost,
     });
-    applySession(state.sessions, PI, session, {
+    recordFileSession(state, fileSessions, PI, session, {
       t: ts,
       r: 1,
       p: project,
+      model,
       title: title || undefined,
       i: input,
       o: output,
@@ -130,5 +133,8 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
     const removed = state.pi.seen.splice(0, state.pi.seen.length - PI_SEEN_LIMIT);
     for (const key of removed) seen.delete(key);
   }
-  state.files[path] = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, sessionTitle: title || undefined };
+  const fileState: FileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, sessionTitle: title || undefined };
+  if (Object.keys(fileBuckets).length > 0) fileState.buckets = fileBuckets;
+  if (Object.keys(fileSessions).length > 0) fileState.sessions = fileSessions;
+  state.files[path] = fileState;
 }

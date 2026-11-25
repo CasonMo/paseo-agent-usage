@@ -1,8 +1,10 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { localHourKey } from "./util";
 
 export const STATE_VERSION = 13;
+export const DEFAULT_ARCHIVE_RETENTION_DAYS = 92;
 
 /** Usage aggregate for one hour bucket. Bucket keys start with an hour key `YYYY-MM-DDTHH`. */
 export interface UsageBucket {
@@ -52,6 +54,9 @@ export interface CodexForkState {
   firstTs: number | null;
 }
 
+/** Compact per-model token tuple `[input, output, cacheRead, cacheWrite]` stored on sessions. */
+export type SessionModelTokens = [number, number, number, number];
+
 /** Per-session aggregate, keyed `harness \u0001 sessionId` in `ScanState.sessions`.
  *  `s`/`e` are the first/last counted call timestamps; fields mirror UsageBucket.
  *  `title` is a short human label (first user message or summary), first win. */
@@ -68,6 +73,22 @@ export interface SessionEntry {
   credits: number;
   p: string;
   title?: string;
+  /** Optional per-model token breakdown for dynamic report-time cost estimation. */
+  models?: Record<string, SessionModelTokens>;
+}
+
+/** Archived usage from source files that have been deleted/purged from disk. */
+export interface ArchiveState {
+  buckets: Record<string, UsageBucket>;
+  sessions: Record<string, SessionEntry>;
+}
+
+/** Per-conversation projection for Antigravity CLI so deleted DBs remain archived. */
+export interface AgyConversationArchive {
+  buckets: Record<string, UsageBucket>;
+  session?: SessionEntry;
+  /** True only once the source `.db` file has vanished from disk. */
+  archived?: true;
 }
 
 /** Keeps the sessions index bounded (≈1MB): counted requests drop dead entries,
@@ -98,8 +119,30 @@ export interface SessionDelta {
   cost?: number;
   credits?: number;
   p?: string;
+  /** Model ID for this call; tracked compactly for report-time cost estimation. */
+  model?: string;
   /** Human label; only the first non-empty value wins so later calls keep it. */
   title?: string;
+}
+
+function applySessionModelDelta(
+  entry: SessionEntry,
+  model: string | undefined,
+  i: number,
+  o: number,
+  cr: number,
+  cw: number,
+): void {
+  if (!model || (i === 0 && o === 0 && cr === 0 && cw === 0)) return;
+  entry.models ??= {};
+  const prev = entry.models[model] ?? [0, 0, 0, 0];
+  const next: SessionModelTokens = [prev[0] + i, prev[1] + o, prev[2] + cr, prev[3] + cw];
+  if (next[0] <= 0 && next[1] <= 0 && next[2] <= 0 && next[3] <= 0) {
+    delete entry.models[model];
+    if (Object.keys(entry.models).length === 0) delete entry.models;
+  } else {
+    entry.models[model] = next;
+  }
 }
 
 /** Applies one normalized call to a session's aggregate. Unknown sessions only
@@ -113,18 +156,23 @@ export function applySession(sessions: Record<string, SessionEntry>, harness: st
     entry = { s: delta.t ?? 0, e: delta.t ?? 0, r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0, p: delta.p ?? "" };
     sessions[key] = entry;
   }
+  const di = delta.i ?? 0;
+  const do_ = delta.o ?? 0;
+  const dcr = delta.cr ?? 0;
+  const dcw = delta.cw ?? 0;
   entry.r += delta.r;
-  entry.i += delta.i ?? 0;
-  entry.o += delta.o ?? 0;
-  entry.cr += delta.cr ?? 0;
-  entry.cw += delta.cw ?? 0;
+  entry.i += di;
+  entry.o += do_;
+  entry.cr += dcr;
+  entry.cw += dcw;
   entry.rz += delta.rz ?? 0;
   entry.cost += delta.cost ?? 0;
   entry.credits += delta.credits ?? 0;
+  applySessionModelDelta(entry, delta.model, di, do_, dcr, dcw);
   if (delta.p) entry.p = delta.p;
   if (delta.title && !entry.title) entry.title = delta.title;
   if (typeof delta.t === "number" && Number.isFinite(delta.t)) {
-    if (delta.t < entry.s) entry.s = delta.t;
+    if (entry.s === 0 || delta.t < entry.s) entry.s = delta.t;
     if (delta.t > entry.e) entry.e = delta.t;
   }
 }
@@ -143,6 +191,10 @@ export interface FileState {
   /** Last seen Codex cumulative totals: [input, cached, cacheWrite, output, reasoning, total]. */
   totals?: number[];
   recent?: RecentContribution[];
+  /** Per-file bucket contribution for surgical shrink recovery and purge-proof archiving. */
+  buckets?: Record<string, UsageBucket>;
+  /** Per-file session contribution for surgical shrink recovery and purge-proof archiving. */
+  sessions?: Record<string, SessionEntry>;
 }
 
 export interface RemoteHostState {
@@ -187,6 +239,10 @@ export interface ScanState {
   pi: { seen: string[] };
   /** Projections pulled from remote machines over SSH, keyed by host name. */
   hosts: Record<string, RemoteHostState>;
+  /** Durable archive of vanished log files (survives source deletion and active-file shrinks). */
+  archive?: ArchiveState;
+  /** Per-conversation Antigravity projections so deleted DBs stay archived. */
+  agy?: Record<string, AgyConversationArchive>;
   meta: { lastScanAt: number | null; scanError: string | null };
 }
 
@@ -225,15 +281,11 @@ export function bucketKey(hourKey: string, harness: string, model: string, proje
   return [hourKey, harness, model, project].join("\u0001");
 }
 
-export function addBucket(
+export function addBucketByKey(
   buckets: Record<string, UsageBucket>,
-  hourKey: string,
-  harness: string,
-  model: string,
-  project: string,
+  key: string,
   delta: Partial<UsageBucket> & { r: number },
 ): void {
-  const key = bucketKey(hourKey, harness, model, project);
   let bucket = buckets[key];
   if (!bucket) {
     bucket = { r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0 };
@@ -258,6 +310,185 @@ export function addBucket(
     bucket.credits <= 0
   ) {
     delete buckets[key];
+  }
+}
+
+export function addBucket(
+  buckets: Record<string, UsageBucket>,
+  hourKey: string,
+  harness: string,
+  model: string,
+  project: string,
+  delta: Partial<UsageBucket> & { r: number },
+): void {
+  addBucketByKey(buckets, bucketKey(hourKey, harness, model, project), delta);
+}
+
+/** Applies a bucket delta to both the global state and the owning file's contribution ledger. */
+export function recordFileBucket(
+  state: ScanState,
+  fileBuckets: Record<string, UsageBucket>,
+  hourKey: string,
+  harness: string,
+  model: string,
+  project: string,
+  delta: Partial<UsageBucket> & { r: number },
+): void {
+  addBucket(state.buckets, hourKey, harness, model, project, delta);
+  addBucket(fileBuckets, hourKey, harness, model, project, delta);
+}
+
+/** Applies a session delta to both the global state and the owning file's contribution ledger. */
+export function recordFileSession(
+  state: ScanState,
+  fileSessions: Record<string, SessionEntry>,
+  harness: string,
+  sid: string,
+  delta: SessionDelta,
+): void {
+  applySession(state.sessions, harness, sid, delta);
+  applySession(fileSessions, harness, sid, delta);
+}
+
+export function mergeSessionEntry(
+  sessions: Record<string, SessionEntry>,
+  key: string,
+  entry: SessionEntry,
+  sign: 1 | -1 = 1,
+): void {
+  let target = sessions[key];
+  if (!target) {
+    if (sign < 0 || entry.r <= 0) return;
+    target = { s: entry.s, e: entry.e, r: 0, i: 0, o: 0, cr: 0, cw: 0, rz: 0, cost: 0, credits: 0, p: entry.p };
+    sessions[key] = target;
+  }
+  target.r += sign * entry.r;
+  target.i += sign * entry.i;
+  target.o += sign * entry.o;
+  target.cr += sign * entry.cr;
+  target.cw += sign * entry.cw;
+  target.rz += sign * entry.rz;
+  target.cost += sign * entry.cost;
+  target.credits += sign * entry.credits;
+  if (entry.models) {
+    for (const [model, tuple] of Object.entries(entry.models)) {
+      applySessionModelDelta(target, model, sign * tuple[0], sign * tuple[1], sign * tuple[2], sign * tuple[3]);
+    }
+  }
+  if (sign > 0) {
+    if (entry.p && !target.p) target.p = entry.p;
+    if (entry.title && !target.title) target.title = entry.title;
+    if (entry.s > 0 && (target.s === 0 || entry.s < target.s)) target.s = entry.s;
+    if (entry.e > target.e) target.e = entry.e;
+  }
+  if (target.r <= 0 && target.i <= 0 && target.o <= 0 && target.cr <= 0 && target.cw <= 0) {
+    delete sessions[key];
+  }
+}
+
+export function mergeBuckets(
+  target: Record<string, UsageBucket>,
+  source: Record<string, UsageBucket> | undefined,
+  sign: 1 | -1 = 1,
+): void {
+  if (!source) return;
+  for (const [key, bucket] of Object.entries(source)) {
+    addBucketByKey(target, key, {
+      r: sign * bucket.r,
+      i: sign * bucket.i,
+      o: sign * bucket.o,
+      cr: sign * bucket.cr,
+      cw: sign * bucket.cw,
+      rz: sign * bucket.rz,
+      cost: sign * bucket.cost,
+      credits: sign * bucket.credits,
+    });
+  }
+}
+
+/** Moves a deleted file's recorded contribution into `state.archive` so future active-file shrinks cannot erase it. */
+export function archiveFileContribution(state: ScanState, fileState: FileState): void {
+  const hasBuckets = fileState.buckets && Object.keys(fileState.buckets).length > 0;
+  const hasSessions = fileState.sessions && Object.keys(fileState.sessions).length > 0;
+  if (!hasBuckets && !hasSessions) return;
+  state.archive ??= { buckets: {}, sessions: {} };
+  mergeBuckets(state.archive.buckets, fileState.buckets, 1);
+  if (fileState.sessions) {
+    for (const [key, entry] of Object.entries(fileState.sessions)) {
+      mergeSessionEntry(state.archive.sessions, key, entry, 1);
+    }
+  }
+}
+
+/** Surgically revokes a single shrunk file's contribution from `state` without disturbing any other file or archive. */
+export function revokeFileContribution(state: ScanState, fileState: FileState): void {
+  mergeBuckets(state.buckets, fileState.buckets, -1);
+  if (fileState.sessions) {
+    for (const [key, entry] of Object.entries(fileState.sessions)) {
+      mergeSessionEntry(state.sessions, key, entry, -1);
+    }
+  }
+}
+
+/**
+ * Prunes archived (vanished-source) history older than `retentionDays`.
+ * `retentionDays <= 0` means unlimited retention (no pruning).
+ * Live files currently on disk are never pruned here.
+ */
+export function pruneArchivedHistory(
+  state: ScanState,
+  retentionDays: number = DEFAULT_ARCHIVE_RETENTION_DAYS,
+  now = Date.now(),
+): void {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
+  const cutoffMs = now - retentionDays * 86_400_000;
+  const cutoffHour = localHourKey(cutoffMs);
+
+  if (state.archive) {
+    for (const [key, bucket] of Object.entries(state.archive.buckets)) {
+      const hour = key.split("\u0001", 1)[0] ?? "";
+      if (hour && hour < cutoffHour) {
+        addBucketByKey(state.buckets, key, {
+          r: -bucket.r,
+          i: -bucket.i,
+          o: -bucket.o,
+          cr: -bucket.cr,
+          cw: -bucket.cw,
+          rz: -bucket.rz,
+          cost: -bucket.cost,
+          credits: -bucket.credits,
+        });
+        delete state.archive.buckets[key];
+      }
+    }
+    for (const [key, entry] of Object.entries(state.archive.sessions)) {
+      if (entry.e > 0 && entry.e < cutoffMs) {
+        mergeSessionEntry(state.sessions, key, entry, -1);
+        delete state.archive.sessions[key];
+      }
+    }
+    if (Object.keys(state.archive.buckets).length === 0 && Object.keys(state.archive.sessions).length === 0) {
+      delete state.archive;
+    }
+  }
+
+  if (state.agy) {
+    for (const [sid, conv] of Object.entries(state.agy)) {
+      if (!conv.archived) continue;
+      let latestHour = "";
+      for (const key of Object.keys(conv.buckets)) {
+        const hour = key.split("\u0001", 1)[0] ?? "";
+        if (hour > latestHour) latestHour = hour;
+      }
+      const sessionExpired = conv.session ? conv.session.e > 0 && conv.session.e < cutoffMs : true;
+      const bucketsExpired = !latestHour || latestHour < cutoffHour;
+      if (sessionExpired && bucketsExpired) {
+        mergeBuckets(state.buckets, conv.buckets, -1);
+        if (conv.session) mergeSessionEntry(state.sessions, `agy\u0001${sid}`, conv.session, -1);
+        delete state.agy[sid];
+      }
+    }
+    if (Object.keys(state.agy).length === 0) delete state.agy;
   }
 }
 
@@ -288,7 +519,7 @@ function finite(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function sanitizeBuckets(raw: unknown): Record<string, UsageBucket> {
+export function sanitizeBuckets(raw: unknown): Record<string, UsageBucket> {
   const buckets: Record<string, UsageBucket> = {};
   if (!raw || typeof raw !== "object") return buckets;
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
@@ -308,13 +539,25 @@ function sanitizeBuckets(raw: unknown): Record<string, UsageBucket> {
   return buckets;
 }
 
-function sanitizeSessions(raw: unknown): Record<string, SessionEntry> {
+function sanitizeSessionModels(raw: unknown): Record<string, SessionModelTokens> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const models: Record<string, SessionModelTokens> = {};
+  for (const [model, tuple] of Object.entries(raw as Record<string, unknown>)) {
+    if (!model || !Array.isArray(tuple) || tuple.length < 4) continue;
+    const entry: SessionModelTokens = [finite(tuple[0]), finite(tuple[1]), finite(tuple[2]), finite(tuple[3])];
+    if (entry[0] > 0 || entry[1] > 0 || entry[2] > 0 || entry[3] > 0) models[model] = entry;
+  }
+  return Object.keys(models).length > 0 ? models : undefined;
+}
+
+export function sanitizeSessions(raw: unknown): Record<string, SessionEntry> {
   const sessions: Record<string, SessionEntry> = {};
   if (!raw || typeof raw !== "object") return sessions;
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!value || typeof value !== "object") continue;
     const record = value as Record<string, unknown>;
-    sessions[key] = {
+    const models = sanitizeSessionModels(record.models);
+    const entry: SessionEntry = {
       s: finite(record.s),
       e: finite(record.e),
       r: finite(record.r),
@@ -326,10 +569,30 @@ function sanitizeSessions(raw: unknown): Record<string, SessionEntry> {
       cost: finite(record.cost),
       credits: finite(record.credits),
       p: typeof record.p === "string" ? record.p : "",
-      title: typeof record.title === "string" ? record.title : undefined,
     };
+    if (typeof record.title === "string") entry.title = record.title;
+    if (models) entry.models = models;
+    sessions[key] = entry;
   }
   return sessions;
+}
+
+function sanitizeAgyArchive(raw: unknown): Record<string, AgyConversationArchive> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, AgyConversationArchive> = {};
+  for (const [sid, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!sid || !value || typeof value !== "object") continue;
+    const record = value as Record<string, unknown>;
+    const buckets = sanitizeBuckets(record.buckets);
+    const sessionMap = record.session ? sanitizeSessions({ s: record.session }) : {};
+    const session = sessionMap.s;
+    if (Object.keys(buckets).length > 0 || session) {
+      const entry: AgyConversationArchive = session ? { buckets, session } : { buckets };
+      if (record.archived === true) entry.archived = true;
+      out[sid] = entry;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export async function loadState(dir: string): Promise<ScanState> {
@@ -355,6 +618,15 @@ export async function loadState(dir: string): Promise<ScanState> {
     };
     state.pi = { seen: Array.isArray(parsed.pi?.seen) ? (parsed.pi.seen as string[]).filter((k) => typeof k === "string") : [] };
     state.hosts = (parsed.hosts as ScanState["hosts"]) ?? {};
+    if (parsed.archive && typeof parsed.archive === "object") {
+      const archiveBuckets = sanitizeBuckets(parsed.archive.buckets);
+      const archiveSessions = sanitizeSessions(parsed.archive.sessions);
+      if (Object.keys(archiveBuckets).length > 0 || Object.keys(archiveSessions).length > 0) {
+        state.archive = { buckets: archiveBuckets, sessions: archiveSessions };
+      }
+    }
+    const agy = sanitizeAgyArchive(parsed.agy);
+    if (agy) state.agy = agy;
     state.meta = {
       lastScanAt: typeof parsed.meta?.lastScanAt === "number" ? parsed.meta.lastScanAt : null,
       scanError: typeof parsed.meta?.scanError === "string" ? parsed.meta.scanError : null,

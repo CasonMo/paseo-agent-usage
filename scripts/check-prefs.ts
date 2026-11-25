@@ -35,16 +35,32 @@ async function main(): Promise<void> {
       assert.equal(dismissed.saved, true);
       assert.equal(stale.saved, true);
       assert.equal((await first.prefsGet()).coCreateDismissed, true, "dismissal must be monotonic");
+
+      const withPricingAndRetention = await first.prefsSet({
+        ...(await first.prefsGet()),
+        archiveRetentionDays: 180,
+        customModelPrices: [{ model: "custom-model-a", input: 2.5, output: 10, cacheRead: 0.25, cacheWrite: 2.5 }],
+      });
+      assert.equal(withPricingAndRetention.saved, true);
     } finally {
       first.stop();
     }
 
-    const persisted = JSON.parse(await readFile(join(dataDir, "prefs.json"), "utf8")) as { coCreateDismissed?: unknown };
+    const persisted = JSON.parse(await readFile(join(dataDir, "prefs.json"), "utf8")) as {
+      coCreateDismissed?: unknown;
+      archiveRetentionDays?: unknown;
+      customModelPrices?: unknown;
+    };
     assert.equal(persisted.coCreateDismissed, true, "dismissal should be written to prefs.json");
+    assert.equal(persisted.archiveRetentionDays, 180, "archive retention should persist");
+    assert.ok(Array.isArray(persisted.customModelPrices) && persisted.customModelPrices.length === 1);
 
     const second = createUsageService();
     try {
-      assert.equal((await second.prefsGet()).coCreateDismissed, true, "dismissal should survive a service restart");
+      const reloaded = await second.prefsGet();
+      assert.equal(reloaded.coCreateDismissed, true, "dismissal should survive a service restart");
+      assert.equal(reloaded.archiveRetentionDays, 180, "archive retention should survive a service restart");
+      assert.equal(reloaded.customModelPrices?.[0]?.model, "custom-model-a");
     } finally {
       second.stop();
     }

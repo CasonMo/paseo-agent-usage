@@ -23,6 +23,21 @@ export type UsageRangeKey = z.infer<typeof usageRangeSchema>;
 export const usageGranularitySchema = z.enum(["hour", "day", "week", "month"]);
 export type UsageGranularity = z.infer<typeof usageGranularitySchema>;
 
+export const DEFAULT_ARCHIVE_RETENTION_DAYS = 92;
+
+export const costSourceSchema = z.enum(["reported", "estimated", "mixed", "unpriced"]);
+export type CostSource = z.infer<typeof costSourceSchema>;
+
+export const customModelPriceSchema = z.object({
+  model: z.string().trim().min(1).max(120),
+  mapTo: z.string().trim().max(120).optional(),
+  input: z.number().min(0).max(10_000).optional(),
+  output: z.number().min(0).max(10_000).optional(),
+  cacheRead: z.number().min(0).max(10_000).optional(),
+  cacheWrite: z.number().min(0).max(10_000).optional(),
+});
+export type CustomModelPriceConfig = z.infer<typeof customModelPriceSchema>;
+
 export const totalsSchema = z.object({
   requests: z.number(),
   input: z.number(),
@@ -31,6 +46,11 @@ export const totalsSchema = z.object({
   cacheWrite: z.number(),
   reasoning: z.number(),
   reportedCostUsd: z.number(),
+  estimatedCostUsd: z.number(),
+  costUsd: z.number(),
+  cacheSavingsUsd: z.number(),
+  unpricedTokens: z.number(),
+  unpricedModels: z.array(z.string()),
   credits: z.number(),
 });
 
@@ -47,6 +67,7 @@ export const seriesPointSchema = z.object({
   reasoning: z.number(),
   credits: z.number(),
   costUsd: z.number(),
+  cacheSavingsUsd: z.number(),
   byAgent: z.record(z.string(), z.number()),
   byAgentRequests: z.record(z.string(), z.number()),
   byAgentCostUsd: z.record(z.string(), z.number()),
@@ -64,6 +85,10 @@ export const modelItemSchema = z.object({
   reasoning: z.number(),
   credits: z.number(),
   reportedCostUsd: z.number(),
+  estimatedCostUsd: z.number(),
+  costUsd: z.number(),
+  cacheSavingsUsd: z.number(),
+  costSource: costSourceSchema,
 });
 
 export const projectItemSchema = z.object({
@@ -85,6 +110,7 @@ export const callRecordSchema = z.object({
   reasoning: z.number(),
   credits: z.number(),
   costUsd: z.number(),
+  costSource: z.enum(["reported", "estimated", "unpriced"]),
   origin: z.string(),
 });
 
@@ -110,6 +136,10 @@ export const agentItemSchema = z.object({
   reasoning: z.number(),
   totalTokens: z.number(),
   reportedCostUsd: z.number(),
+  estimatedCostUsd: z.number(),
+  costUsd: z.number(),
+  cacheSavingsUsd: z.number(),
+  unpricedTokens: z.number(),
   credits: z.number(),
 });
 
@@ -128,6 +158,9 @@ export const sessionItemSchema = z.object({
   cacheWrite: z.number(),
   totalTokens: z.number(),
   reportedCostUsd: z.number(),
+  estimatedCostUsd: z.number(),
+  costUsd: z.number(),
+  cacheSavingsUsd: z.number(),
   credits: z.number(),
 });
 
@@ -195,6 +228,9 @@ export const timeMatrixSchema = z.object({
 
 export const monthToDateSchema = z.object({
   costUsd: z.number(),
+  reportedCostUsd: z.number(),
+  estimatedCostUsd: z.number(),
+  cacheSavingsUsd: z.number(),
   tokens: z.number(),
   requests: z.number(),
 });
@@ -390,6 +426,10 @@ export const usagePrefsSchema = z.object({
   defaultRange: usageRangeSchema.optional(),
   defaultGranularity: usageGranularitySchema.optional(),
   monthlyBudgetUsd: z.number().min(0).max(1_000_000_000).optional(),
+  /** Days to keep archived usage after source log files are deleted (0 = unlimited, default 92). */
+  archiveRetentionDays: z.number().int().min(0).max(3650).optional(),
+  /** User-defined per-model USD/1M token overrides or model aliases. */
+  customModelPrices: z.array(customModelPriceSchema).max(100).optional(),
   dashboard: dashboardConfigSchema.optional(),
 });
 

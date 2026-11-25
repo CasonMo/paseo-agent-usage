@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { addBucket, applySession, recordCall, type FileState, type ScanState } from "./state";
+import { recordCall, recordFileBucket, recordFileSession, type FileState, type ScanState, type SessionEntry, type UsageBucket } from "./state";
 import { clipTitle, firstMessageText, forEachNewLine, localHourKey, MACHINE_LABEL, num } from "./util";
 
 export const CODEBUDDY = "codebuddy";
@@ -73,6 +73,8 @@ function sessionLabel(entry: Record<string, unknown>): string {
 
 export async function scanCodebuddyFile(state: ScanState, path: string): Promise<void> {
   const previousState = state.files[path];
+  const fileBuckets: Record<string, UsageBucket> = previousState?.buckets ? { ...previousState.buckets } : {};
+  const fileSessions: Record<string, SessionEntry> = previousState?.sessions ? { ...previousState.sessions } : {};
   let sessionTitle = previousState?.sessionTitle ?? "";
   const result = await forEachNewLine(path, previousState?.offset ?? 0, (line) => {
     // Usage rows are always parsed. Non-usage rows are only parsed while the
@@ -118,7 +120,7 @@ export async function scanCodebuddyFile(state: ScanState, path: string): Promise
     const output = num(usage.outputTokens);
     const reasoning = sumDetail(usage.outputTokensDetails, "reasoning_tokens");
 
-    addBucket(state.buckets, localHourKey(ts), CODEBUDDY, model, project, {
+    recordFileBucket(state, fileBuckets, localHourKey(ts), CODEBUDDY, model, project, {
       r: 1,
       i: input,
       o: output,
@@ -126,10 +128,11 @@ export async function scanCodebuddyFile(state: ScanState, path: string): Promise
       cw: 0,
       rz: reasoning,
     });
-    applySession(state.sessions, CODEBUDDY, sid, {
+    recordFileSession(state, fileSessions, CODEBUDDY, sid, {
       t: ts,
       r: 1,
       p: project,
+      model,
       i: input,
       o: output,
       cr: cacheRead,
@@ -154,5 +157,7 @@ export async function scanCodebuddyFile(state: ScanState, path: string): Promise
   if (!result) return;
   const fileState: FileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs };
   if (sessionTitle) fileState.sessionTitle = sessionTitle;
+  if (Object.keys(fileBuckets).length > 0) fileState.buckets = fileBuckets;
+  if (Object.keys(fileSessions).length > 0) fileState.sessions = fileSessions;
   state.files[path] = fileState;
 }

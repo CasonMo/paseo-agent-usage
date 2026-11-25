@@ -229,6 +229,7 @@ function countCall(state: ScanState, call: ParsedCall, seen: Set<string>, seenOr
     t: call.ts,
     r: 1,
     p: call.project,
+    model: call.model,
     i: call.input,
     o: outputWithReasoning,
     cr: call.cacheRead,

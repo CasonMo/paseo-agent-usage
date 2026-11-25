@@ -1,14 +1,15 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { AGENT_IDS, AGENT_LABELS, dashboardConfigSchema } from "../shared/usage";
-import type { UsageAgentReport, UsageAgentSetItem, UsageAgentToggle, UsageGranularity, UsageHostForm, UsageHostListItem, UsagePrefs, UsageRangeKey, UsageReport } from "../shared/usage";
+import { normalizeModelId } from "../shared/pricing";
+import { AGENT_IDS, AGENT_LABELS, DEFAULT_ARCHIVE_RETENTION_DAYS, customModelPriceSchema, dashboardConfigSchema } from "../shared/usage";
+import type { CustomModelPriceConfig, UsageAgentReport, UsageAgentSetItem, UsageAgentToggle, UsageGranularity, UsageHostForm, UsageHostListItem, UsagePrefs, UsageRangeKey, UsageReport } from "../shared/usage";
 import { buildAgentReport, buildReport, type HostView } from "./report";
 import { setServerLocale, st } from "./i18n";
 import { applyHostForms, readHostsFile, writeHostsFile } from "./remote/hosts-file";
 import { pullHost, testHost, type HostConfig } from "./remote/ssh";
 import { AGY } from "./scan/agy";
 import { scanAll } from "./scan/scanner";
-import { emptyState, loadState, pluginDataDir, saveState, type CallRecord, type UsageBucket, type RemoteHostState, type ScanState, type SessionEntry } from "./scan/state";
+import { emptyState, loadState, pluginDataDir, pruneArchivedHistory, sanitizeBuckets as sanitizeStateBuckets, sanitizeSessions as sanitizeStateSessions, saveState, type CallRecord, type RemoteHostState, type ScanState } from "./scan/state";
 import { num } from "./scan/util";
 
 export interface UsageService {
@@ -54,6 +55,32 @@ function defaultPrefs(): UsagePrefs {
 const RANGE_VALUES = new Set(["24h", "today", "7d", "30d", "12w", "12m", "custom"]);
 const GRANULARITY_VALUES = new Set(["hour", "day", "week", "month"]);
 
+function sanitizeCustomPrices(raw: unknown): CustomModelPriceConfig[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const byKey = new Map<string, CustomModelPriceConfig>();
+  for (const item of raw) {
+    if (byKey.size >= 100) break;
+    const parsed = customModelPriceSchema.safeParse(item);
+    if (!parsed.success) continue;
+    const entry = parsed.data;
+    const key = normalizeModelId(entry.model);
+    if (!key) continue;
+    const clean: CustomModelPriceConfig = { model: entry.model.trim() };
+    const mapTo = entry.mapTo?.trim();
+    if (mapTo) clean.mapTo = mapTo;
+    if (entry.input !== undefined) clean.input = entry.input;
+    if (entry.output !== undefined) clean.output = entry.output;
+    if (entry.cacheRead !== undefined) clean.cacheRead = entry.cacheRead;
+    if (entry.cacheWrite !== undefined) clean.cacheWrite = entry.cacheWrite;
+    if (!clean.mapTo && clean.input === undefined && clean.output === undefined && clean.cacheRead === undefined && clean.cacheWrite === undefined) {
+      continue;
+    }
+    byKey.set(key, clean);
+  }
+  const list = [...byKey.values()];
+  return list.length > 0 ? list : undefined;
+}
+
 function sanitizePrefs(raw: unknown): UsagePrefs {
   const next = defaultPrefs();
   if (raw && typeof raw === "object") {
@@ -77,32 +104,18 @@ function sanitizePrefs(raw: unknown): UsagePrefs {
     if (typeof record.monthlyBudgetUsd === "number" && Number.isFinite(record.monthlyBudgetUsd)) {
       next.monthlyBudgetUsd = Math.max(0, Math.min(1_000_000_000, record.monthlyBudgetUsd));
     }
+    if (typeof record.archiveRetentionDays === "number" && Number.isFinite(record.archiveRetentionDays)) {
+      const days = Math.round(record.archiveRetentionDays);
+      if (days >= 0 && days <= 3650) next.archiveRetentionDays = days;
+    }
+    const customPrices = sanitizeCustomPrices(record.customModelPrices);
+    if (customPrices) next.customModelPrices = customPrices;
     if (record.dashboard) {
       const parsed = dashboardConfigSchema.safeParse(record.dashboard);
       if (parsed.success) next.dashboard = parsed.data;
     }
   }
   return next;
-}
-
-function sanitizeBuckets(raw: unknown): Record<string, UsageBucket> {
-  const buckets: Record<string, UsageBucket> = {};
-  if (!raw || typeof raw !== "object") return buckets;
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (!value || typeof value !== "object") continue;
-    const record = value as Record<string, unknown>;
-    buckets[key] = {
-      r: num(record.r),
-      i: num(record.i),
-      o: num(record.o),
-      cr: num(record.cr),
-      cw: num(record.cw),
-      rz: num(record.rz),
-      cost: num(record.cost),
-      credits: num(record.credits),
-    };
-  }
-  return buckets;
 }
 
 function sanitizeRecent(raw: unknown): Record<string, CallRecord[]> {
@@ -132,29 +145,6 @@ function sanitizeRecent(raw: unknown): Record<string, CallRecord[]> {
     recent[harness] = records;
   }
   return recent;
-}
-
-function sanitizeSessions(raw: unknown): Record<string, SessionEntry> {
-  const sessions: Record<string, SessionEntry> = {};
-  if (!raw || typeof raw !== "object") return sessions;
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (!value || typeof value !== "object") continue;
-    const record = value as Record<string, unknown>;
-    sessions[key] = {
-      s: num(record.s),
-      e: num(record.e),
-      r: num(record.r),
-      i: num(record.i),
-      o: num(record.o),
-      cr: num(record.cr),
-      cw: num(record.cw),
-      rz: num(record.rz),
-      cost: num(record.cost),
-      credits: num(record.credits),
-      p: typeof record.p === "string" ? record.p : "",
-    };
-  }
-  return sessions;
 }
 
 function parseProjection(text: string): Projection | null {
@@ -283,9 +273,15 @@ export function createUsageService(): UsageService {
       } catch (error) {
         return { saved: false, error: st("保存失败：", "Save failed: ") + (error instanceof Error ? error.message : String(error)) };
       }
+      const previousRetention = prefs.archiveRetentionDays ?? DEFAULT_ARCHIVE_RETENTION_DAYS;
       prefs = sanitized;
       prefsAt = Date.now();
       applyPrefs();
+      const nextRetention = prefs.archiveRetentionDays ?? DEFAULT_ARCHIVE_RETENTION_DAYS;
+      if (nextRetention > 0 && (previousRetention === 0 || nextRetention < previousRetention)) {
+        pruneArchivedHistory(state, nextRetention);
+        void saveState(dir, state).catch(() => {});
+      }
       return { saved: true, error: null };
     });
   }
@@ -369,9 +365,9 @@ export function createUsageService(): UsageService {
           } else {
             const next: RemoteHostState = {
               target: host.target,
-              buckets: sanitizeBuckets(projection.buckets),
+              buckets: sanitizeStateBuckets(projection.buckets),
               recent: sanitizeRecent(projection.recent),
-              sessions: sanitizeSessions(projection.sessions),
+              sessions: sanitizeStateSessions(projection.sessions),
               lastPullAt: Date.now(),
               lastAttemptAt: Date.now(),
               lastError: null,
@@ -396,6 +392,7 @@ export function createUsageService(): UsageService {
     await loaded;
     if (stopped || scanning) return false;
     await refreshAgentsConfig(true);
+    await refreshPrefs(false);
     if (stopped || scanning) return false;
     const age = state.meta.lastScanAt ? Date.now() - state.meta.lastScanAt : Number.POSITIVE_INFINITY;
     // A version 13 cache may be fresh and still predate the agy scanner.
@@ -409,16 +406,21 @@ export function createUsageService(): UsageService {
     void (async () => {
       const startedAt = Date.now();
       try {
-        await scanAll(state, {
-          shouldStop: () => stopped,
-          onProgress: (doneCount, totalCount) => {
-            done = doneCount;
-            total = totalCount;
+        await scanAll(
+          state,
+          {
+            shouldStop: () => stopped,
+            onProgress: (doneCount, totalCount) => {
+              done = doneCount;
+              total = totalCount;
+            },
+            onCheckpoint: () => {
+              void saveState(dir, state).catch(() => {});
+            },
           },
-          onCheckpoint: () => {
-            void saveState(dir, state).catch(() => {});
-          },
-        }, enabledHarnesses());
+          enabledHarnesses(),
+          { archiveRetentionDays: prefs.archiveRetentionDays ?? DEFAULT_ARCHIVE_RETENTION_DAYS },
+        );
         state.meta.lastScanAt = Date.now();
         state.meta.scanError = null;
         console.log(`[agent-usage] scan finished in ${Math.round((Date.now() - startedAt) / 1000)}s (${Object.keys(state.buckets).length} buckets)`);
@@ -447,16 +449,37 @@ export function createUsageService(): UsageService {
     await loaded;
     await refreshHostConfigs(false);
     await refreshAgentsConfig(false);
+    await refreshPrefs(false);
     if (!state.meta.lastScanAt && !scanning) schedule(0);
     else if (dirty && !scanning) schedule(2_000);
-    return buildReport(state, range, { scanning, done, total }, hostViews(), origin, enabledHarnesses(), custom, granularity ?? "day");
+    return buildReport(
+      state,
+      range,
+      { scanning, done, total },
+      hostViews(),
+      origin,
+      enabledHarnesses(),
+      custom,
+      granularity ?? "day",
+      prefs.customModelPrices,
+    );
   }
 
   async function agentReport(agent: string, range: UsageRangeKey, origin?: string, custom?: { from?: string; to?: string }, granularity?: UsageGranularity): Promise<UsageAgentReport> {
     await loaded;
     await refreshAgentsConfig(false);
+    await refreshPrefs(false);
     if (dirty && !scanning) schedule(2_000);
-    return buildAgentReport(state, agent, range, origin, enabledHarnesses(), custom, granularity ?? "day");
+    return buildAgentReport(
+      state,
+      agent,
+      range,
+      origin,
+      enabledHarnesses(),
+      custom,
+      granularity ?? "day",
+      prefs.customModelPrices,
+    );
   }
 
   async function hostsList(): Promise<{ hosts: UsageHostListItem[] }> {

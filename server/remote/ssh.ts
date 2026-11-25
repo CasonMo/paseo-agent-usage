@@ -111,12 +111,15 @@ function runtimePrefix(host: HostConfig): string {
   ].join("\n");
 }
 
-function remoteCommand(host: HostConfig): string {
+function remoteCommand(host: HostConfig, archiveRetentionDays?: number): string {
   let command = `${runtimePrefix(host)}\nexec "$rt" -`;
   if (host.cacheDir) {
     const value = host.cacheDir;
     const safe = /^~\/[\w@%+=:,./-]+$/.test(value) ? value : shellQuote(value);
     command += ` --cache-dir ${safe}`;
+  }
+  if (typeof archiveRetentionDays === "number" && Number.isFinite(archiveRetentionDays) && archiveRetentionDays >= 0) {
+    command += ` --archive-retention-days ${Math.min(3650, Math.round(archiveRetentionDays))}`;
   }
   return command;
 }
@@ -208,8 +211,8 @@ async function executeSsh(host: HostConfig, pluginDataDir: string, command: stri
   });
 }
 
-export async function pullHost(host: HostConfig, pluginDataDir: string): Promise<HostPullResult> {
-  return await executeSsh(host, pluginDataDir, remoteCommand(host), {
+export async function pullHost(host: HostConfig, pluginDataDir: string, archiveRetentionDays?: number): Promise<HostPullResult> {
+  return await executeSsh(host, pluginDataDir, remoteCommand(host, archiveRetentionDays), {
     timeoutMs: host.timeoutMs ?? 180000,
     maxBytes: MAX_STDOUT_BYTES,
     stdin: COLLECTOR_SCRIPT,

@@ -152,10 +152,13 @@ export async function scanCodebuddyFile(state: ScanState, path: string): Promise
       rz: reasoning,
       cost: 0,
       credits: 0,
+      f: path,
     });
   });
   if (!result) return;
+  const ledgerFrom0 = !previousState || previousState.offset === 0 || Boolean(previousState.ledgerFrom0);
   const fileState: FileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs };
+  if (ledgerFrom0) fileState.ledgerFrom0 = true;
   if (sessionTitle) fileState.sessionTitle = sessionTitle;
   if (Object.keys(fileBuckets).length > 0) fileState.buckets = fileBuckets;
   if (Object.keys(fileSessions).length > 0) fileState.sessions = fileSessions;

@@ -25,11 +25,11 @@ type UsagePatch = Partial<
 const DEFAULT_RANGE_OPTIONS: UsageRangeKey[] = ["24h", "today", "7d", "30d", "12w", "12m"];
 const DEFAULT_GRANULARITY_OPTIONS: UsageGranularity[] = ["hour", "day", "week", "month"];
 const RETENTION_OPTIONS: ReadonlyArray<{ days: number; key: DictKey }> = [
+  { days: 0, key: "config.retention.0" },
   { days: 30, key: "config.retention.30" },
   { days: 92, key: "config.retention.92" },
   { days: 180, key: "config.retention.180" },
   { days: 365, key: "config.retention.365" },
-  { days: 0, key: "config.retention.0" },
 ];
 
 function GeneralSection({ theme, compact }: { theme: Theme; compact: boolean }) {

@@ -125,12 +125,15 @@ export async function scanClaudeFile(state: ScanState, path: string): Promise<vo
         cost: 0,
         credits: 0,
         id: id ?? undefined,
+        f: path,
       },
       id ?? undefined,
     );
   });
   if (!result) return;
+  const ledgerFrom0 = !previousState || previousState.offset === 0 || Boolean(previousState.ledgerFrom0);
   const fileState: FileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs };
+  if (ledgerFrom0) fileState.ledgerFrom0 = true;
   if (sessionTitle) fileState.sessionTitle = sessionTitle;
   if (recent.size > 0) fileState.recent = [...recent.values()].slice(-96);
   if (Object.keys(fileBuckets).length > 0) fileState.buckets = fileBuckets;

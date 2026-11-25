@@ -21,14 +21,14 @@
 - 节奏：年历热力图、星期 × 小时打卡、24 小时画像、星期画像、活跃度与连续天数、时段 × Agent
 - 会话：会话散点、时长/Token 分布、Top 会话、会话泳道、请求大小、近期速率、分页会话明细与请求日志
 - 对比：Agent 雷达、月度预算燃烧率与月末预测、数据覆盖与主机同步状态
-- 图表交互：点按图表查看当期明细；卡片标题旁的圆圈问号可悬浮/点按查看说明；列表默认 Top 5/6，可展开；成本卡与预算卡优先采用日志上报成本，未上报模型按内置 API 费率表估算并展示缓存节省（未定价模型显式提示，可在配置页自定义单价）；自定义范围的日期选择器默认收起，点“编辑日期”展开
+- 图表交互：点按图表查看当期明细；卡片标题旁的圆圈问号可悬浮/点按查看说明；列表默认 Top 5/6，可展开；成本卡与预算卡优先采用日志上报成本，未上报模型及未上报调用按内置 API 费率表估算并展示缓存节省（`:free` / `-free` 优先计为 $0，未知新版本保持未定价；未定价模型及缺少模型明细的旧版会话缓存会在 UI 显式提示，可在配置页自定义单价，旧会话需重扫补齐模型明细）；自定义范围的日期选择器默认收起，点“编辑日期”展开
 - 会话明细按会话 ID 聚合，单个 Agent 展示最近 200 个；请求日志底层每个 Agent 保留约 400 条、报告最多展示 120 条；两者每页 20 条
 
 刷新机制：首次扫描全量历史日志（本机约 30 秒，其间页面显示扫描进度），之后按文件增量刷新（约 1~2 秒），agy 按会话逐库刷新以同步数据库修订并保留已删除会话的归档；单个活跃日志文件缩容时仅局部重扫该文件而不清空已归档历史；Agent 回合结束后会自动触发防抖增量刷新。插件升级保持 v13 缓存兼容，不丢弃既有归档。会话索引最多保留 8000 个最近会话（超出按会话末次活动时间淘汰）。
 
 配置（用量页右上角「配置」或 Paseo 设置 → 插件）：
 
-- **通用**：界面语言（跟随系统 / 中文 / English，自动检测系统语言）与**定时刷新**（关闭 / 5 分钟 / 15 分钟 / **30 分钟（默认）** / 1 小时 / 6 小时 / 24 小时；定时自动扫描本地日志并同步远端主机）；还可自定义**本机标签**（设备选择器与请求日志里默认「本机」的显示名称，留空恢复默认，仅保存于本机偏好文件）、**默认时间范围与趋势粒度**（打开用量页时的初始范围/粒度，如「当日 + 小时」「近 7 天 + 月」等，未设置时为近 7 天 + 日）、**归档保留天数**（默认 92 天，可选 30 / 92 / 180 / 365 天或永久保留，用于控制源日志删除后的归档留存时长），以及**月度预算（USD，可选）**，用于预算卡的燃烧率与月末预测
+- **通用**：界面语言（跟随系统 / 中文 / English，自动检测系统语言）与**定时刷新**（关闭 / 5 分钟 / 15 分钟 / **30 分钟（默认）** / 1 小时 / 6 小时 / 24 小时；定时自动扫描本地日志并同步远端主机）；还可自定义**本机标签**（设备选择器与请求日志里默认「本机」的显示名称，留空恢复默认，仅保存于本机偏好文件）、**默认时间范围与趋势粒度**（打开用量页时的初始范围/粒度，如「当日 + 小时」「近 7 天 + 月」等，未设置时为近 7 天 + 日）、**归档保留天数**（默认永久保留，可选永久保留或 30 / 92 / 180 / 365 天，用于控制源日志删除后的归档留存时长，并随 `--archive-retention-days` 下发给 SSH 远端采集器），以及**月度预算（USD，可选）**，用于预算卡的燃烧率与月末预测
 - **模型定价**：为任意模型 ID 或前缀配置自定义单价（输入 / 输出 / 缓存读 / 缓存写，USD/1M Token）或别名映射（`mapTo`），保存后即时重算所有成本与预算卡，无需重扫日志；未定价模型会在设置页直接列出供一键配置
 - **Agent 开关**：关闭的 Agent 不展示、不拉取
 - **远端主机（SSH）**：增删改与测试连接
@@ -86,14 +86,14 @@ Interface: the "Usage" row at the bottom of the sidebar shows today's tokens; cl
 - Rhythm: year calendar, weekday × hour punchcard, 24-hour profile, weekday profile, activity streak, hour × agent heatmap
 - Sessions: duration/token scatter, distribution histograms, top sessions, swimlane, request-size histogram, recent pace, paginated session list and request log
 - Compare: agent radar, monthly budget burn with month-end projection, data coverage and host sync state
-- Chart interaction: tap a chart for that period's detail; the circled question mark next to each card title shows its description on hover or tap; lists show top 5/6 with expand; cost and budget cards use raw log-reported costs first and estimate unbilled models with a built-in API rate table plus cache savings (unpriced models are attributed explicitly and configurable in Settings); the custom-range calendar is collapsed behind "Edit dates"
+- Chart interaction: tap a chart for that period's detail; the circled question mark next to each card title shows its description on hover or tap; lists show top 5/6 with expand; cost and budget cards use raw log-reported costs first and estimate unbilled models and unreported calls with a built-in API rate table plus cache savings (`:free` / `-free` models resolve to $0 before prefix lookup, unknown newer versions stay unpriced, and legacy sessions missing per-model breakdown are shown as Unpriced in the UI until rescanned; custom rates can be set in Settings); the custom-range calendar is collapsed behind "Edit dates"
 - Sessions are grouped by session ID; one agent shows the latest 200 sessions, the request log keeps about 400 calls per agent and reports up to 120; both paginate 20 rows
 
 Refresh: the first scan reads the full history (about 30 seconds locally, with progress shown on the page), after which files refresh incrementally (about 1-2 seconds). Each refresh updates present agy conversation databases individually while preserving archived history for deleted conversations; a single active log file shrinking rescans only that file without dropping archived history. A debounced incremental refresh triggers automatically when an agent turn ends. The cache stays compatible with v13 state without discarding existing archives. The session index keeps at most the 8,000 most recent sessions (older ones are evicted by last activity time).
 
 Settings (the "Settings" entry at the top right of the usage page, or Paseo Settings → Plugins):
 
-- **General**: interface language (follow system / Chinese / English, auto-detected) and **auto refresh** (off / 5 min / 15 min / **30 min (default)** / 1 hour / 6 hours / 24 hours; periodically scans local logs and syncs remote hosts); you can also set a custom **local device label** (the display name used instead of the default "本机 / Local" in the device selector and request log; leave empty to restore the default, stored only in the local preference file), a **default range and trend granularity** (the initial range/granularity when the usage page opens, such as "today + hour" or "last 7 days + month"; unset means last 7 days + day), **archive retention** (default 92 days; options 30 / 92 / 180 / 365 days or Unlimited for keeping archived stats after source logs are deleted), and an optional **monthly budget (USD)** driving the budget card burn rate and month-end projection
+- **General**: interface language (follow system / Chinese / English, auto-detected) and **auto refresh** (off / 5 min / 15 min / **30 min (default)** / 1 hour / 6 hours / 24 hours; periodically scans local logs and syncs remote hosts); you can also set a custom **local device label** (the display name used instead of the default "本机 / Local" in the device selector and request log; leave empty to restore the default, stored only in the local preference file), a **default range and trend granularity** (the initial range/granularity when the usage page opens, such as "today + hour" or "last 7 days + month"; unset means last 7 days + day), **archive retention** (default Unlimited; options Unlimited or 30 / 92 / 180 / 365 days for keeping archived stats after source logs are deleted, forwarded to SSH remote collectors via `--archive-retention-days`), and an optional **monthly budget (USD)** driving the budget card burn rate and month-end projection
 - **Model pricing**: configure custom per-model USD/1M token rates (`input`, `output`, `cacheRead`, `cacheWrite`) or alias mappings (`mapTo`) with live preview; changes take effect immediately across all cost and budget cards without rescanning logs, and recent unpriced models are surfaced for one-tap configuration
 - **Agent toggles**: disabled agents are neither shown nor fetched
 - **Remote hosts (SSH)**: add, edit, delete, and test connections

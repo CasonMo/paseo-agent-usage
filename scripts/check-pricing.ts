@@ -17,11 +17,20 @@ const hourKey = (date: Date): string => {
 async function main(): Promise<void> {
   // 1. Unit assertions for rate resolution & normalization
   assert.deepEqual(resolveModelRate("claude-sonnet-4-6"), { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 });
+  assert.deepEqual(resolveModelRate("claude-opus-5-5"), { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 });
+  assert.deepEqual(resolveModelRate("claude-sonnet-5-5"), { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 });
+  assert.deepEqual(resolveModelRate("claude-fable-5-2"), { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 });
+  assert.deepEqual(resolveModelRate("claude-fable-5-1"), { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 });
   assert.deepEqual(resolveModelRate("anthropic/claude-haiku-4-5-20251001"), { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 });
   assert.deepEqual(resolveModelRate("gpt-5.3-codex"), { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 1.75 });
   assert.deepEqual(resolveModelRate("gemini-4-hydrogen-high"), { input: 1.5, output: 7.5, cacheRead: 0.075, cacheWrite: 1.5 });
   assert.deepEqual(resolveModelRate("gemini-3.8-flash-control"), { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75 });
   assert.deepEqual(resolveModelRate("glm-4.7-free"), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  assert.deepEqual(resolveModelRate("deepseek/deepseek-chat-v3-0324:free"), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  assert.deepEqual(resolveModelRate("deepseek-v4-flash:free"), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  assert.deepEqual(resolveModelRate("gpt-5-nano-free"), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  assert.equal(resolveModelRate("claude-opus-4-9"), null, "unknown newer versions must stay unpriced instead of falling back to older family prices");
+  assert.equal(resolveModelRate("claude-opus-4-9-20260101"), null);
   assert.equal(resolveModelRate("unknown-custom-model"), null, "unknown models must remain unpriced, not silently $0");
 
   // 2. Report-level estimation, reported-cost precedence, cache savings, and explicit unpriced attribution
@@ -155,6 +164,56 @@ async function main(): Promise<void> {
     { model: "loop-b", mapTo: "loop-a" },
   ]);
   assert.equal(cyclic, null, "cyclic aliases must terminate safely as unpriced");
+
+  // 3b. Mixed reported + unreported calls in the same bucket & session must NOT drop unreported estimates
+  const mixedState = emptyState();
+  addBucket(mixedState.buckets, currentHour, "opencode", "claude-sonnet-4-6", "/workspace/acme", {
+    r: 1,
+    i: 100_000,
+    o: 0,
+    cr: 0,
+    cw: 0,
+    cost: 1.25,
+  });
+  addBucket(mixedState.buckets, currentHour, "opencode", "claude-sonnet-4-6", "/workspace/acme", {
+    r: 1,
+    i: 1_000_000,
+    o: 0,
+    cr: 0,
+    cw: 0,
+    cost: 0,
+  });
+  applySession(mixedState.sessions, "opencode", "sess-mixed", {
+    t: ts,
+    r: 1,
+    p: "/workspace/acme",
+    model: "claude-sonnet-4-6",
+    i: 100_000,
+    o: 0,
+    cr: 0,
+    cw: 0,
+    cost: 1.25,
+  });
+  applySession(mixedState.sessions, "opencode", "sess-mixed", {
+    t: ts + 1000,
+    r: 1,
+    p: "/workspace/acme",
+    model: "claude-sonnet-4-6",
+    i: 1_000_000,
+    o: 0,
+    cr: 0,
+    cw: 0,
+    cost: 0,
+  });
+  const mixedReport = buildReport(mixedState, "7d", { scanning: false, done: 0, total: 0 }, [], undefined, enabled, null, "day");
+  assert.equal(mixedReport.totals.reportedCostUsd, 1.25);
+  assert.equal(mixedReport.totals.estimatedCostUsd, 3, "unreported 1M input at $3/1M must still be estimated");
+  assert.equal(mixedReport.totals.costUsd, 4.25);
+  assert.equal(mixedReport.models[0]?.costSource, "mixed");
+  assert.equal(mixedReport.sessionStats.top[0]?.reportedCostUsd, 1.25);
+  assert.equal(mixedReport.sessionStats.top[0]?.estimatedCostUsd, 3);
+  assert.equal(mixedReport.sessionStats.top[0]?.costUsd, 4.25);
+  assert.equal(mixedReport.sessionStats.top[0]?.costSource, "mixed");
 
   // 4. End-to-end UsageService read-after-write check: updating customModelPrices updates report immediately without rescan
   const root = await mkdtemp(join(tmpdir(), "agent-usage-pricing-svc-"));

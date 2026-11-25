@@ -10,6 +10,7 @@ import {
   mergeBuckets,
   mergeSessionEntry,
   pruneArchivedHistory,
+  revokeArchivedFile,
   revokeFileContribution,
   type ScanState,
 } from "./state";
@@ -23,7 +24,7 @@ export interface ScanCallbacks {
 }
 
 export interface ScanOptions {
-  /** Days to keep archived history for vanished log files (0 = unlimited, default 92). */
+  /** Days to keep archived history for vanished log files (0 = unlimited, default 0). */
   archiveRetentionDays?: number;
   /** Override wall clock for deterministic retention tests. */
   now?: number;
@@ -44,7 +45,11 @@ export async function scanAll(
     collectRoots(codexRoots()),
     collectRoots(codebuddyRoots()),
   ]);
-  await reconcileTrackedFiles(state, new Set(piFiles));
+  await reconcileTrackedFiles(state, new Set(piFiles), [
+    ...(on("claude") ? claudeFiles : []),
+    ...(on("codex") ? codexFiles : []),
+    ...(on("codebuddy") ? codebuddyFiles : []),
+  ]);
 
   const total =
     (on("claude") ? claudeFiles.length : 0) +
@@ -120,7 +125,11 @@ async function collectRoots(roots: string[]): Promise<string[]> {
  * - Legacy shrunk files without a recorded contribution fall back to resetting
  *   active counters while preserving `state.archive` and `state.agy`.
  */
-async function reconcileTrackedFiles(state: ScanState, piFiles: ReadonlySet<string>): Promise<void> {
+async function reconcileTrackedFiles(
+  state: ScanState,
+  piFiles: ReadonlySet<string>,
+  reappearingCandidates: readonly string[] = [],
+): Promise<void> {
   let needsLegacyReset = false;
   for (const [path, file] of Object.entries(state.files)) {
     if (!file) {
@@ -130,10 +139,10 @@ async function reconcileTrackedFiles(state: ScanState, piFiles: ReadonlySet<stri
     try {
       const info = await stat(path);
       if (file.offset > 0 && info.isFile() && info.size < file.offset) {
-        const hasLedger = Boolean(file.buckets || file.sessions);
-        if (hasLedger && !piFiles.has(path)) {
+        const hasCompleteLedger = Boolean(file.ledgerFrom0);
+        if (hasCompleteLedger && !piFiles.has(path)) {
           console.warn("[agent-usage] log file shrank; rescanning file surgically without dropping archive");
-          revokeFileContribution(state, file);
+          revokeFileContribution(state, file, path);
           delete state.files[path];
         } else {
           needsLegacyReset = true;
@@ -144,8 +153,16 @@ async function reconcileTrackedFiles(state: ScanState, piFiles: ReadonlySet<stri
       if (code === "ENOENT") {
         // Deleted/purged file: keep its already-counted history in the durable archive
         // and prune the stale file pointer (freeing any retained per-file recent cache).
-        archiveFileContribution(state, file);
+        archiveFileContribution(state, file, path);
         delete state.files[path];
+      }
+    }
+  }
+  if (state.archive?.files) {
+    for (const path of reappearingCandidates) {
+      if (state.files[path] || !state.archive.files[path]) continue;
+      if (revokeArchivedFile(state, path) === "legacy_reset") {
+        needsLegacyReset = true;
       }
     }
   }

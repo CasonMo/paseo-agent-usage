@@ -126,6 +126,7 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
       rz: reasoning,
       cost,
       credits: 0,
+      f: path,
     });
   });
   if (!result) return;
@@ -133,7 +134,9 @@ export async function scanPiFile(state: ScanState, path: string): Promise<void> 
     const removed = state.pi.seen.splice(0, state.pi.seen.length - PI_SEEN_LIMIT);
     for (const key of removed) seen.delete(key);
   }
+  const ledgerFrom0 = !previousState || previousState.offset === 0 || Boolean(previousState.ledgerFrom0);
   const fileState: FileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, sessionTitle: title || undefined };
+  if (ledgerFrom0) fileState.ledgerFrom0 = true;
   if (Object.keys(fileBuckets).length > 0) fileState.buckets = fileBuckets;
   if (Object.keys(fileSessions).length > 0) fileState.sessions = fileSessions;
   state.files[path] = fileState;

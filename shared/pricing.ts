@@ -73,10 +73,10 @@ function roundRate(value: number): number {
  */
 export const BUILTIN_MODEL_PRICES: Readonly<Record<string, ModelPriceRate>> = {
   // Anthropic Claude
-  "claude-fable-5-2": anthropic(8, 40),
-  "claude-fable-5-1": anthropic(10, 50),
+  "claude-fable-5-2": anthropic(8, 40, 0.2),
+  "claude-fable-5-1": anthropic(10, 50, 0.25),
   "claude-fable-5": anthropic(10, 50),
-  "claude-opus-5-5": anthropic(4, 20),
+  "claude-opus-5-5": anthropic(4, 20, 0.2),
   "claude-opus-5": anthropic(5, 25),
   "claude-opus-4-8": anthropic(5, 25),
   "claude-opus-4-7": anthropic(5, 25),
@@ -87,7 +87,7 @@ export const BUILTIN_MODEL_PRICES: Readonly<Record<string, ModelPriceRate>> = {
   "claude-4-1-opus": anthropic(15, 75),
   "claude-4-opus": anthropic(15, 75),
   "claude-3-opus": anthropic(15, 75),
-  "claude-sonnet-5-5": anthropic(2, 10),
+  "claude-sonnet-5-5": anthropic(2, 10, 0.1),
   "claude-sonnet-5": anthropic(2, 10),
   "claude-sonnet-4-6": anthropic(3, 15),
   "claude-sonnet-4-5": anthropic(3, 15),
@@ -202,14 +202,28 @@ function isFreeModel(normalized: string): boolean {
   return normalized.endsWith("-free") || normalized.endsWith(":free");
 }
 
+/**
+ * Built-in prefix fallback only accepts non-version suffixes (dates, `-latest`,
+ * or reasoning/effort/runtime tags) so unknown newer model versions stay unpriced
+ * instead of silently inheriting older family rates (e.g. `claude-opus-4-9`).
+ */
+const BUILTIN_PREFIX_SUFFIX =
+  /^(?:(?:-(?:latest|\d{8}|\d{4}-\d{2}-\d{2}|(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])|high|low|medium|xhigh|minimal|control|thinking|preview|exp|fast|turbo|1m)|@\d{8}|:(?:\d+m|thinking)))+(?::\d+)?$/i;
+
+function isAllowedBuiltinSuffix(model: string, pattern: string): boolean {
+  if (!matchesPrefix(model, pattern)) return false;
+  const suffix = model.slice(pattern.length);
+  return suffix.length === 0 || BUILTIN_PREFIX_SUFFIX.test(suffix);
+}
+
 function resolveBuiltinRate(normalized: string): ModelPriceRate | null {
   if (!normalized || normalized === "unknown") return null;
+  if (isFreeModel(normalized)) return FREE_RATE;
   const exact = BUILTIN_MODEL_PRICES[normalized];
   if (exact) return exact;
   for (const key of BUILTIN_KEYS_SORTED) {
-    if (matchesPrefix(normalized, key)) return BUILTIN_MODEL_PRICES[key] ?? null;
+    if (isAllowedBuiltinSuffix(normalized, key)) return BUILTIN_MODEL_PRICES[key] ?? null;
   }
-  if (isFreeModel(normalized)) return FREE_RATE;
   return null;
 }
 
@@ -235,7 +249,7 @@ function resolveCustomEntry(
 /**
  * Resolves the USD-per-1M-tokens rate for a model.
  * Precedence: custom override (exact -> longest boundary prefix, with optional `mapTo` alias)
- * -> built-in table (exact -> longest boundary prefix) -> explicit `*-free` -> `null` (unpriced).
+ * -> explicit `*-free` / `:free` -> built-in table (exact -> date/`-latest`/effort suffix) -> `null` (unpriced).
  */
 export function resolveModelRate(
   model: string,

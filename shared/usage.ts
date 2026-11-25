@@ -23,7 +23,7 @@ export type UsageRangeKey = z.infer<typeof usageRangeSchema>;
 export const usageGranularitySchema = z.enum(["hour", "day", "week", "month"]);
 export type UsageGranularity = z.infer<typeof usageGranularitySchema>;
 
-export const DEFAULT_ARCHIVE_RETENTION_DAYS = 92;
+export const DEFAULT_ARCHIVE_RETENTION_DAYS = 0;
 
 export const costSourceSchema = z.enum(["reported", "estimated", "mixed", "unpriced"]);
 export type CostSource = z.infer<typeof costSourceSchema>;
@@ -161,6 +161,7 @@ export const sessionItemSchema = z.object({
   estimatedCostUsd: z.number(),
   costUsd: z.number(),
   cacheSavingsUsd: z.number(),
+  costSource: costSourceSchema,
   credits: z.number(),
 });
 
@@ -192,6 +193,7 @@ export const sessionStatsSchema = z.object({
   totalCostUsd: z.number(),
   medianCostUsd: z.number(),
   p90CostUsd: z.number(),
+  unpricedCount: z.number(),
   durationHistogram: z.array(histogramBucketSchema),
   tokenHistogram: z.array(histogramBucketSchema),
   costHistogram: z.array(histogramBucketSchema),
@@ -426,7 +428,7 @@ export const usagePrefsSchema = z.object({
   defaultRange: usageRangeSchema.optional(),
   defaultGranularity: usageGranularitySchema.optional(),
   monthlyBudgetUsd: z.number().min(0).max(1_000_000_000).optional(),
-  /** Days to keep archived usage after source log files are deleted (0 = unlimited, default 92). */
+  /** Days to keep archived usage after source log files are deleted (0 = unlimited, default 0). */
   archiveRetentionDays: z.number().int().min(0).max(3650).optional(),
   /** User-defined per-model USD/1M token overrides or model aliases. */
   customModelPrices: z.array(customModelPriceSchema).max(100).optional(),

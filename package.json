@@ -1,7 +1,7 @@
 {
   "name": "paseo-agent-usage",
-  "version": "0.8.0",
-  "description": "Token usage statistics for coding agents (Claude Code, Codex, OpenCode, Pi, Antigravity CLI, Codebuddy Code) from local session logs, with SSH collection, six analysis pages, custom dashboards, budgets, session details, and a dismissible GitHub issue/PR co-creation entry.",
+  "version": "0.9.0",
+  "description": "Token usage statistics for coding agents (Claude Code, Codex, OpenCode, Pi, Antigravity CLI, Codebuddy Code) from local session logs, with SSH collection, API-equivalent cost estimation and custom model pricing, purge-proof archive retention, six analysis pages, custom dashboards, budgets, session details, and a dismissible GitHub issue/PR co-creation entry.",
   "license": "MIT",
   "repository": {
     "type": "git",

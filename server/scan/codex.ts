@@ -158,6 +158,7 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
               rz: num(last.reasoning_output_tokens),
               cost: 0,
               credits: 0,
+              f: path,
             });
           }
         }
@@ -224,10 +225,13 @@ export async function scanCodexFile(state: ScanState, path: string): Promise<voi
       rz: dReasoning,
       cost: 0,
       credits: 0,
+      f: path,
     });
   });
   if (!result) return;
+  const ledgerFrom0 = !previousState || previousState.offset === 0 || Boolean(previousState.ledgerFrom0);
   const fileState: FileState = { offset: result.offset, size: result.size, mtimeMs: result.mtimeMs, project, model, session };
+  if (ledgerFrom0) fileState.ledgerFrom0 = true;
   if (title) fileState.sessionTitle = title;
   if (totals) fileState.totals = totals;
   if (fork.forked) fileState.codexFork = fork;

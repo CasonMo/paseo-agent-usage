@@ -328,7 +328,9 @@ export function createUsageService(): UsageService {
 
   async function pullHosts(force: boolean): Promise<void> {
     await loaded;
+    await refreshPrefs(false);
     if (stopped) return;
+    const retentionDays = prefs.archiveRetentionDays ?? DEFAULT_ARCHIVE_RETENTION_DAYS;
     const configs = (await refreshHostConfigs(true)).filter((host) => host.enabled);
     if (configs.length === 0) return;
     const now = Date.now();
@@ -344,7 +346,7 @@ export function createUsageService(): UsageService {
       for (const host of due) {
         if (stopped) return;
         console.log(`[agent-usage] pulling host ${host.name} (${host.target})`);
-        const result = await pullHost(host, dir);
+        const result = await pullHost(host, dir, retentionDays);
         const existing = state.hosts[host.name];
         const base: RemoteHostState = existing ?? {
           target: host.target,

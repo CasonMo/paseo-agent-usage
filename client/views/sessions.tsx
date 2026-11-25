@@ -71,6 +71,15 @@ export function SessionDistributionCard({ data, theme, locale }: CardProps) {
       <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>
         {pick(locale, `中位 ${formatter(median)} · P90 ${formatter(p90)} · 共 ${stats.count} 个会话`, `Median ${formatter(median)} · P90 ${formatter(p90)} · ${stats.count} sessions`)}
       </Text>
+      {metric === "cost" && stats.unpricedCount > 0 ? (
+        <Text style={{ fontSize: 10, color: theme.colors.foregroundMuted }}>
+          {pick(
+            locale,
+            `含 ${stats.unpricedCount} 个未定价会话（升级前旧缓存缺少模型明细或模型未配置单价）。`,
+            `Includes ${stats.unpricedCount} unpriced session(s) (legacy cache without model breakdown or unpriced model).`,
+          )}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -90,7 +99,13 @@ export function TopSessionsCard({ data, theme, locale }: CardProps) {
             <Text style={{ fontSize: 11, fontWeight: "700", color: theme.colors.foreground, fontVariant: ["tabular-nums"] }}>{formatTokens(session.totalTokens)}</Text>
           </View>
           <Text numberOfLines={1} style={{ marginLeft: 22, fontSize: 9, color: theme.colors.foregroundMuted }}>
-            {[shortProject(session.project), formatDurationMs(session.durationMs), `${formatCount(session.requests)} ${pick(locale, "次", "req")}`, agentShort(session.agent)].join(" · ")}
+            {[
+              shortProject(session.project),
+              formatDurationMs(session.durationMs),
+              `${formatCount(session.requests)} ${pick(locale, "次", "req")}`,
+              session.costSource === "unpriced" ? pick(locale, "未定价", "Unpriced") : formatUsd(session.costUsd),
+              agentShort(session.agent),
+            ].join(" · ")}
           </Text>
         </View>
       ))}
@@ -196,7 +211,9 @@ export function SessionTableCard({ data, theme, locale }: CardProps) {
           <Text style={{ width: 74, fontSize: 9, color: theme.colors.foregroundMuted }}>{new Date(session.start).toLocaleDateString(locale === "zh" ? "zh-CN" : "en-US")}</Text>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text numberOfLines={1} style={{ fontSize: 10, color: theme.colors.foreground }}>{topSessionLabel(session)}</Text>
-            <Text numberOfLines={1} style={{ fontSize: 9, color: theme.colors.foregroundMuted }}>{shortProject(session.project)} · {agentShort(session.agent)}</Text>
+            <Text numberOfLines={1} style={{ fontSize: 9, color: theme.colors.foregroundMuted }}>
+              {shortProject(session.project)} · {agentShort(session.agent)} · {session.costSource === "unpriced" ? pick(locale, "未定价", "Unpriced") : formatUsd(session.costUsd)}
+            </Text>
           </View>
           <Text style={{ width: 52, textAlign: "right", fontSize: 10, color: theme.colors.foregroundMuted, fontVariant: ["tabular-nums"] }}>{formatCount(session.requests)}</Text>
           <Text style={{ width: 58, textAlign: "right", fontSize: 10, color: theme.colors.foreground, fontVariant: ["tabular-nums"] }}>{formatTokens(session.totalTokens)}</Text>

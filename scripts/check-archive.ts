@@ -5,7 +5,16 @@ import { join } from "node:path";
 import { scanAgy } from "../server/scan/agy";
 import { loadSqlite } from "../server/scan/opencode";
 import { scanAll } from "../server/scan/scanner";
-import { emptyState, loadState, pruneArchivedHistory, saveState, type ScanState } from "../server/scan/state";
+import {
+  addBucket,
+  applySession,
+  DEFAULT_ARCHIVE_RETENTION_DAYS,
+  emptyState,
+  loadState,
+  pruneArchivedHistory,
+  saveState,
+  type ScanState,
+} from "../server/scan/state";
 
 function claudeRow(options: {
   id: string;
@@ -331,7 +340,7 @@ async function checkArchiveRetentionPolicy(): Promise<void> {
     assert.equal(unlimitedState.sessions["claude\u0001sess-10d"]?.r, 1);
     assert.equal(unlimitedState.sessions["claude\u0001sess-120d"]?.r, 1);
 
-    // Tightening retention to default 92 days prunes the 120d vanished archive while keeping the 10d archive.
+    // Tightening retention to 92 days prunes the 120d vanished archive while keeping the 10d archive.
     await scanAll(unlimitedState, noopCallbacks, new Set(["claude"]), { archiveRetentionDays: 92, now });
     assert.deepEqual(sumHarness(unlimitedState, "claude"), { r: 1, i: 500, o: 100, cr: 0, cw: 0 });
     assert.equal(unlimitedState.sessions["claude\u0001sess-10d"]?.r, 1);
@@ -343,10 +352,131 @@ async function checkArchiveRetentionPolicy(): Promise<void> {
   }
 }
 
+async function checkLegacyShrinkRecentDedupAndTransientEnoent(): Promise<void> {
+  assert.equal(DEFAULT_ARCHIVE_RETENTION_DAYS, 0, "default archive retention must be unlimited (0)");
+  const root = await mkdtemp(join(tmpdir(), "agent-usage-archive-edge-"));
+  const previousClaudeDir = process.env.CLAUDE_CONFIG_DIR;
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CLAUDE_CONFIG_DIR = join(root, "claude");
+  process.env.CODEX_HOME = join(root, "codex");
+  try {
+    const projectDir = join(root, "claude", "projects", "acme-edge");
+    await mkdir(projectDir, { recursive: true });
+    const now = Date.now();
+    const tsIso = new Date(now - 3600_000).toISOString();
+    const hourKey = `${tsIso.slice(0, 10)}T${String(new Date(tsIso).getHours()).padStart(2, "0")}`;
+
+    // 1. Legacy v13 state partial ledger shrink: rows A,B pre-upgrade -> append C -> shrink back to A,B => 2 requests (not 4)
+    const legacyPath = join(projectDir, "sess-legacy.jsonl");
+    const rowA = claudeRow({ id: "msg-a", sessionId: "sess-legacy", timestamp: tsIso, model: "claude-sonnet-4-6", cwd: "/workspace/acme", input: 100, output: 10, cacheRead: 0, cacheWrite: 0 });
+    const rowB = claudeRow({ id: "msg-b", sessionId: "sess-legacy", timestamp: tsIso, model: "claude-sonnet-4-6", cwd: "/workspace/acme", input: 200, output: 20, cacheRead: 0, cacheWrite: 0 });
+    const rowC = claudeRow({ id: "msg-c", sessionId: "sess-legacy", timestamp: tsIso, model: "claude-sonnet-4-6", cwd: "/workspace/acme", input: 300, output: 30, cacheRead: 0, cacheWrite: 0 });
+    const initialBody = `${rowA}\n${rowB}\n`;
+    await writeFile(legacyPath, initialBody);
+
+    const legacyState = emptyState();
+    addBucket(legacyState.buckets, hourKey, "claude", "claude-sonnet-4-6", "/workspace/acme", { r: 2, i: 300, o: 30, cr: 0, cw: 0 });
+    applySession(legacyState.sessions, "claude", "sess-legacy", { t: Date.parse(tsIso), r: 2, p: "/workspace/acme", model: "claude-sonnet-4-6", i: 300, o: 30, cr: 0, cw: 0 });
+    legacyState.files[legacyPath] = { offset: Buffer.byteLength(initialBody), size: Buffer.byteLength(initialBody), mtimeMs: Date.now() };
+
+    await writeFile(legacyPath, `${rowA}\n${rowB}\n${rowC}\n`);
+    await scanAll(legacyState, noopCallbacks, new Set(["claude"]));
+    assert.equal(sumHarness(legacyState, "claude").r, 3);
+
+    await writeFile(legacyPath, initialBody);
+    await scanAll(legacyState, noopCallbacks, new Set(["claude"]));
+    assert.equal(sumHarness(legacyState, "claude").r, 2, "legacy partial-ledger shrink must fall back cleanly to 2 requests");
+    assert.equal(legacyState.sessions["claude\u0001sess-legacy"]?.r, 2);
+
+    // 2. Surgical shrink on Codex must NOT duplicate state.recent entries
+    const codexDir = join(root, "codex", "sessions", "2026", "11", "25");
+    await mkdir(codexDir, { recursive: true });
+    const codexPath = join(codexDir, "rollout-1.jsonl");
+    const codexLine = (idx: number, totalInput: number) =>
+      JSON.stringify({
+        timestamp: new Date(now - (10 - idx) * 60_000).toISOString(),
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: { input_tokens: totalInput, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 10 * idx, reasoning_output_tokens: 0, total_tokens: totalInput + 10 * idx },
+          },
+        },
+      });
+    const codexMeta = JSON.stringify({ timestamp: tsIso, type: "session_meta", payload: { id: "codex-sess-1", cwd: "/workspace/acme" } });
+    const codexCtx = JSON.stringify({ timestamp: tsIso, type: "turn_context", payload: { model: "gpt-5.3-codex" } });
+    await writeFile(codexPath, [codexMeta, codexCtx, codexLine(1, 100), codexLine(2, 250)].join("\n") + "\n");
+
+    const codexState = emptyState();
+    await scanAll(codexState, noopCallbacks, new Set(["codex"]));
+    assert.equal(codexState.recent.codex?.length, 2);
+
+    await writeFile(codexPath, [codexMeta, codexCtx, codexLine(1, 100)].join("\n") + "\n");
+    await scanAll(codexState, noopCallbacks, new Set(["codex"]));
+    assert.equal(sumHarness(codexState, "codex").r, 1);
+    assert.equal(codexState.recent.codex?.length, 1, "surgical shrink must drop stale state.recent samples for the shrunk file");
+
+    // 3. Transient ENOENT (unmounted/renamed file reappearing) must revoke its archived copy instead of double-counting
+    await rm(legacyPath);
+    const movedPath = join(projectDir, "sess-transient.jsonl");
+    const transientContent = `${claudeRow({ id: "msg-tr-1", sessionId: "sess-transient", timestamp: tsIso, model: "claude-sonnet-4-6", cwd: "/workspace/acme", input: 400, output: 40, cacheRead: 0, cacheWrite: 0 })}\n`;
+    await writeFile(movedPath, transientContent);
+    const transientState = emptyState();
+    await scanAll(transientState, noopCallbacks, new Set(["claude"]));
+    assert.equal(sumHarness(transientState, "claude").r, 1);
+
+    await rm(movedPath);
+    await scanAll(transientState, noopCallbacks, new Set(["claude"]));
+    assert.equal(sumHarness(transientState, "claude").r, 1, "archived while missing");
+
+    await writeFile(movedPath, transientContent);
+    await scanAll(transientState, noopCallbacks, new Set(["claude"]));
+    assert.equal(sumHarness(transientState, "claude").r, 1, "reappearing file must revoke archive and not double-count");
+    assert.equal(transientState.sessions["claude\u0001sess-transient"]?.r, 1);
+    assert.equal(transientState.recent.claude?.filter((item) => item.s === "sess-transient").length, 1);
+
+    // 4. Remote collector bundle must honor --archive-retention-days
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+    const collectorCache = join(root, "collector-cache");
+    const oldCollectorPath = join(projectDir, "sess-collector-old.jsonl");
+    const old120Iso = new Date(now - 120 * 86_400_000).toISOString();
+    await rm(movedPath);
+    await writeFile(
+      oldCollectorPath,
+      `${claudeRow({ id: "msg-col-old", sessionId: "sess-col-old", timestamp: old120Iso, model: "claude-sonnet-4-6", cwd: "/workspace/acme", input: 300, output: 30, cacheRead: 0, cacheWrite: 0 })}\n`,
+    );
+    const collectorBundle = join(process.cwd(), "server", "remote", "collector.bundle.js");
+    const runCollector = async (retentionArg?: number) => {
+      const args = [collectorBundle, "--cache-dir", collectorCache];
+      if (retentionArg !== undefined) args.push("--archive-retention-days", String(retentionArg));
+      const { stdout } = await execFileAsync(process.execPath, args, {
+        env: { ...process.env, HOME: root, CODEX_HOME: join(root, "empty-codex"), CODEBUDDY_CONFIG_DIR: join(root, "empty-cb"), PI_CODING_AGENT_DIR: join(root, "empty-pi"), XDG_DATA_HOME: join(root, "empty-xdg") },
+      });
+      return JSON.parse(stdout) as { buckets: Record<string, unknown>; sessions: Record<string, unknown> };
+    };
+    const firstCol = await runCollector(0);
+    assert.ok(firstCol.sessions["claude\u0001sess-col-old"]);
+    await rm(oldCollectorPath);
+    const archivedCol = await runCollector(0);
+    assert.ok(archivedCol.sessions["claude\u0001sess-col-old"], "collector default/0 retention keeps archived 120d session");
+    const prunedCol = await runCollector(92);
+    assert.equal(prunedCol.sessions["claude\u0001sess-col-old"], undefined, "collector --archive-retention-days 92 must prune expired 120d archive");
+  } finally {
+    if (previousClaudeDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = previousClaudeDir;
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
   await checkPurgedClaudeSurvivesFileShrink();
   await checkPurgedAgySurvivesWhileOtherDbRemains();
   await checkArchiveRetentionPolicy();
+  await checkLegacyShrinkRecentDedupAndTransientEnoent();
   console.log("archive checks passed");
 }
 

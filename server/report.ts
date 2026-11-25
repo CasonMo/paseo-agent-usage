@@ -87,7 +87,57 @@ const zero = (): Aggregate => ({
 });
 const tokenTotal = (aggregate: Aggregate): number => aggregate.input + aggregate.output + aggregate.cacheRead + aggregate.cacheWrite;
 
-function priceBucket(model: string, bucket: UsageBucket, customPrices?: readonly CustomModelPrice[]) {
+interface BucketPriceResult {
+  reportedCostUsd: number;
+  estimatedCostUsd: number;
+  costUsd: number;
+  cacheSavingsUsd: number;
+  unpricedTokens: number;
+  source: CostSource;
+}
+
+function priceBucket(model: string, bucket: UsageBucket, customPrices?: readonly CustomModelPrice[]): BucketPriceResult {
+  if (bucket.cost > 0 && bucket.bt !== undefined) {
+    const unbilledInput = Math.max(0, bucket.i - bucket.bt[0]);
+    const unbilledOutput = Math.max(0, bucket.o - bucket.bt[1]);
+    const unbilledCacheRead = Math.max(0, bucket.cr - bucket.bt[2]);
+    const unbilledCacheWrite = Math.max(0, bucket.cw - bucket.bt[3]);
+    const full = estimateTokenCost(
+      model,
+      { input: bucket.i, output: bucket.o, cacheRead: bucket.cr, cacheWrite: bucket.cw, reportedCost: bucket.cost },
+      customPrices,
+    );
+    if (unbilledInput + unbilledOutput + unbilledCacheRead + unbilledCacheWrite <= 0) {
+      return full;
+    }
+    const unbilled = estimateTokenCost(
+      model,
+      {
+        input: unbilledInput,
+        output: unbilledOutput,
+        cacheRead: unbilledCacheRead,
+        cacheWrite: unbilledCacheWrite,
+        reportedCost: 0,
+      },
+      customPrices,
+    );
+    const reportedCostUsd = full.reportedCostUsd;
+    const estimatedCostUsd = unbilled.estimatedCostUsd;
+    const source: CostSource =
+      reportedCostUsd > 0 && estimatedCostUsd > 0
+        ? "mixed"
+        : reportedCostUsd > 0
+          ? "reported"
+          : unbilled.source;
+    return {
+      reportedCostUsd,
+      estimatedCostUsd,
+      costUsd: reportedCostUsd + estimatedCostUsd,
+      cacheSavingsUsd: full.cacheSavingsUsd,
+      unpricedTokens: unbilled.unpricedTokens,
+      source,
+    };
+  }
   return estimateTokenCost(
     model,
     {
@@ -105,7 +155,7 @@ function addAggregate(
   target: Aggregate,
   bucket: UsageBucket,
   model: string,
-  priced: ReturnType<typeof priceBucket>,
+  priced: BucketPriceResult,
 ): void {
   target.requests += bucket.r;
   target.input += bucket.i;
@@ -118,7 +168,7 @@ function addAggregate(
   target.cost += priced.costUsd;
   target.cacheSavings += priced.cacheSavingsUsd;
   target.unpricedTokens += priced.unpricedTokens;
-  if (priced.source === "unpriced") target.unpricedModels.add(model || "unknown");
+  if (priced.unpricedTokens > 0) target.unpricedModels.add(model || "unknown");
   target.credits += bucket.credits;
 }
 
@@ -446,6 +496,7 @@ function emptySessionStats(): UsageSessionStats {
     totalCostUsd: 0,
     medianCostUsd: 0,
     p90CostUsd: 0,
+    unpricedCount: 0,
     durationHistogram: histogram([], DURATION_EDGES),
     tokenHistogram: histogram([], TOKEN_EDGES),
     costHistogram: histogram([], COST_EDGES),
@@ -543,25 +594,74 @@ interface CollectedSession {
 function priceSessionEntry(
   entry: SessionEntry,
   customPrices?: readonly CustomModelPrice[],
-): { reportedCostUsd: number; estimatedCostUsd: number; costUsd: number; cacheSavingsUsd: number } {
+): { reportedCostUsd: number; estimatedCostUsd: number; costUsd: number; cacheSavingsUsd: number; costSource: CostSource } {
   const reported = Math.max(0, entry.cost);
+  const totalTokens = entry.i + entry.o + entry.cr + entry.cw;
   let cacheSavings = 0;
   let estimated = 0;
-  if (entry.models) {
-    for (const [model, tuple] of Object.entries(entry.models)) {
-      const priced = estimateTokenCost(
+  let unpricedTokens = 0;
+  const modelEntries = entry.models ? Object.entries(entry.models) : [];
+  if (modelEntries.length > 0) {
+    for (const [model, tuple] of modelEntries) {
+      const fullPriced = estimateTokenCost(
         model,
         { input: tuple[0], output: tuple[1], cacheRead: tuple[2], cacheWrite: tuple[3], reportedCost: 0 },
         customPrices,
       );
-      cacheSavings += priced.cacheSavingsUsd;
-      if (reported <= 0) estimated += priced.estimatedCostUsd;
+      cacheSavings += fullPriced.cacheSavingsUsd;
+      if (reported <= 0) {
+        estimated += fullPriced.estimatedCostUsd;
+        unpricedTokens += fullPriced.unpricedTokens;
+      } else if (entry.bt !== undefined) {
+        const billed = entry.bt[model] ?? [0, 0, 0, 0];
+        const unbilledInput = Math.max(0, tuple[0] - billed[0]);
+        const unbilledOutput = Math.max(0, tuple[1] - billed[1]);
+        const unbilledCacheRead = Math.max(0, tuple[2] - billed[2]);
+        const unbilledCacheWrite = Math.max(0, tuple[3] - billed[3]);
+        if (unbilledInput + unbilledOutput + unbilledCacheRead + unbilledCacheWrite > 0) {
+          const unbilledPriced = estimateTokenCost(
+            model,
+            {
+              input: unbilledInput,
+              output: unbilledOutput,
+              cacheRead: unbilledCacheRead,
+              cacheWrite: unbilledCacheWrite,
+              reportedCost: 0,
+            },
+            customPrices,
+          );
+          estimated += unbilledPriced.estimatedCostUsd;
+          unpricedTokens += unbilledPriced.unpricedTokens;
+        }
+      }
     }
+    const costSource: CostSource =
+      reported > 0 && estimated > 0
+        ? "mixed"
+        : reported > 0
+          ? "reported"
+          : unpricedTokens > 0 && estimated <= 0
+            ? "unpriced"
+            : "estimated";
+    return {
+      reportedCostUsd: reported,
+      estimatedCostUsd: estimated,
+      costUsd: reported + estimated,
+      cacheSavingsUsd: cacheSavings,
+      costSource,
+    };
   }
   if (reported > 0) {
-    return { reportedCostUsd: reported, estimatedCostUsd: 0, costUsd: reported, cacheSavingsUsd: cacheSavings };
+    return { reportedCostUsd: reported, estimatedCostUsd: 0, costUsd: reported, cacheSavingsUsd: 0, costSource: "reported" };
   }
-  return { reportedCostUsd: 0, estimatedCostUsd: estimated, costUsd: estimated, cacheSavingsUsd: cacheSavings };
+  // Legacy v13 sessions or older remote projections lack `entry.models`; mark non-empty sessions unpriced.
+  return {
+    reportedCostUsd: 0,
+    estimatedCostUsd: 0,
+    costUsd: 0,
+    cacheSavingsUsd: 0,
+    costSource: totalTokens > 0 ? "unpriced" : "estimated",
+  };
 }
 
 function collectSessions(
@@ -610,6 +710,7 @@ function collectSessions(
           estimatedCostUsd: round2(priced.estimatedCostUsd),
           costUsd: round2(priced.costUsd),
           cacheSavingsUsd: round2(priced.cacheSavingsUsd),
+          costSource: priced.costSource,
           credits: round2(entry.credits),
         },
       });
@@ -623,6 +724,7 @@ function sessionStatsOf(sessions: readonly CollectedSession[]): UsageSessionStat
   const durations = sessions.map((session) => session.item.durationMs).filter((value) => value > 0);
   const tokens = sessions.map((session) => session.item.totalTokens).filter((value) => value > 0);
   const costs = sessions.map((session) => session.item.costUsd).filter((value) => value > 0);
+  const unpricedCount = sessions.filter((session) => session.item.costSource === "unpriced").length;
   const startHours = Array.from({ length: 24 }, () => 0);
   for (const session of sessions) startHours[new Date(session.item.start).getHours()]! += 1;
   const sortedByStart = [...sessions].sort((a, b) => a.item.start - b.item.start);
@@ -655,6 +757,7 @@ function sessionStatsOf(sessions: readonly CollectedSession[]): UsageSessionStat
     totalCostUsd: round2(costs.reduce((sum, value) => sum + value, 0)),
     medianCostUsd: round2(percentile(costs, 0.5)),
     p90CostUsd: round2(percentile(costs, 0.9)),
+    unpricedCount,
     durationHistogram: histogram(durations, DURATION_EDGES),
     tokenHistogram: histogram(tokens, TOKEN_EDGES),
     costHistogram: histogram(costs, COST_EDGES),

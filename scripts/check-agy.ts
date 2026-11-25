@@ -118,6 +118,52 @@ async function check(): Promise<void> {
     await rm(originalPath);
     await scanAgy(state, () => false, root);
     assert.equal(JSON.stringify(state), snapshot);
+
+    // Corrupt/unsupported DB on disk must NOT be flagged archived: true when another readable DB exists,
+    // and deleting a parent/fork DB must NOT double-count shared calls in the surviving DB.
+    const dedupRoot = await mkdtemp(join(tmpdir(), "agent-usage-agy-dedup-"));
+    try {
+      const dedupDir = join(dedupRoot, "conversations");
+      await mkdir(dedupDir);
+      const parentId = "aaaaaaaa-0000-0000-0000-000000000001";
+      const forkId = "bbbbbbbb-0000-0000-0000-000000000002";
+      const corruptId = "cccccccc-0000-0000-0000-000000000003";
+      const parentDbPath = join(dedupDir, `${parentId}.db`);
+      const forkDbPath = join(dedupDir, `${forkId}.db`);
+      const corruptDbPath = join(dedupDir, `${corruptId}.db`);
+      const sharedMeta = new Uint8Array(field(1, [...field(1, 1_800_000_000), ...field(2, 100)]));
+      const forkOwnMeta = new Uint8Array(field(1, [...field(1, 1_800_000_010), ...field(2, 200)]));
+
+      for (const [dbPath, isFork] of [[parentDbPath, false], [forkDbPath, true]] as const) {
+        const handle = new sqlite.DatabaseSync(dbPath);
+        try {
+          handle.exec("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, metadata BLOB); CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB)");
+          handle.prepare("INSERT INTO steps VALUES (1, 15, ?)").all(sharedMeta);
+          handle.prepare("INSERT INTO gen_metadata VALUES (0, ?)").all(generation(40, 8, 100, 5));
+          if (isFork) {
+            handle.prepare("INSERT INTO steps VALUES (2, 15, ?)").all(forkOwnMeta);
+            handle.prepare("INSERT INTO gen_metadata VALUES (1, ?)").all(
+              new Uint8Array([...field(1, [...field(4, [...field(2, 20), ...field(3, 4), ...field(4, 0), ...field(5, 0), ...field(9, 0)]), ...field(19, [...Buffer.from("gemini-fixture")])]), ...field(2, [...varint(2)])]),
+            );
+          }
+        } finally {
+          handle.close();
+        }
+      }
+      const dedupState = emptyState();
+      await scanAgy(dedupState, () => false, dedupRoot);
+      assert.equal(Object.values(dedupState.buckets).reduce((sum, b) => sum + b.r, 0), 2, "shared call + fork own call = 2");
+
+      // Delete parent DB and add a corrupt DB on disk: shared call must still be counted ONCE (not twice!)
+      await rm(parentDbPath);
+      await writeFile(corruptDbPath, "not a sqlite database");
+      await scanAgy(dedupState, () => false, dedupRoot);
+      assert.equal(Object.values(dedupState.buckets).reduce((sum, b) => sum + b.r, 0), 2, "archived parent + live fork must not double-count shared call");
+      assert.equal(dedupState.agy?.[parentId]?.archived, true);
+      assert.equal(dedupState.agy?.[corruptId]?.archived, undefined, "corrupt DB still on disk must not be marked archived");
+    } finally {
+      await rm(dedupRoot, { recursive: true, force: true });
+    }
     console.log("agy scan checks passed");
   } finally {
     await rm(root, { recursive: true, force: true });
